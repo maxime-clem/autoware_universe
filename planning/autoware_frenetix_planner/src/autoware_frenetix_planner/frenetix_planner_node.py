@@ -118,6 +118,7 @@ class FrenetixPlanner(Node):
             # Release condition thresholds
             release_longitudinal_back=declare_and_get("evasive.release_back", Parameter.Type.DOUBLE),
             release_lateral_center=declare_and_get("evasive.release_lat", Parameter.Type.DOUBLE),
+            force_overtake=declare_and_get("evasive.force_overtake", Parameter.Type.BOOL),
         )
 
         # Now build the main Parameters object

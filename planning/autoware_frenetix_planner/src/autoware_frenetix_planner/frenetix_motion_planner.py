@@ -367,6 +367,11 @@ class FrenetixMotionPlanner:
       self.desired_velocity = desired_velocity
 
       min_v = max(0.001, current_speed - self.params.a_max * self.params.planning_horizon)
+
+      # option to force overtake, to do it even at slow speeds
+      if self.params.evasive.force_overtake:
+          min_v = min(desired_velocity, current_speed)
+
       max_v = min(min(current_speed + (self.params.a_max / 5.0) * self.params.planning_horizon, v_limit),
                   self.params.v_max)
 

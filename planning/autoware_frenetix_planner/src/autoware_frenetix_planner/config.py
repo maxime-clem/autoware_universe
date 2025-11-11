@@ -51,6 +51,7 @@ class EvasiveParams(DictLikeDataClass):
     velocity_threshold: float
     release_longitudinal_back: float
     release_lateral_center: float
+    force_overtake: bool
 
 @dataclass
 class CostWeightsParams(DictLikeDataClass):

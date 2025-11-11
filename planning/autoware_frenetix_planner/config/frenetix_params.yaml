@@ -57,7 +57,8 @@
       acc_min: -2.5                 # [m/s^2] Minimum acceleration during evasive maneuvers.
       jerk_acc: 1.0                 # [m/s^3] Maximum jerk when accelerating during evasive maneuvers.
       jerk_dec: -1.0                # [m/s^3] Maximum jerk when decelerating during evasive maneuvers.
-      stop_buffer: 10.0              # [m] Additional buffer distance to stop before the obstacle.
+      stop_buffer: 10.0             # [m] Additional buffer distance to stop before the obstacle.
+      force_overtake: False         # [bool] Whether to force overtaking maneuvers (for low speed tests)
 
       # Trigger Conditions (any one can activate evasive mode)
       velocity_threshold: 3.0       # [m/s] Velocity above which evasive mode can be triggered.
