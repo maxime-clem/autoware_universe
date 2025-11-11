@@ -47,6 +47,9 @@ class FrenetixMotionPlanner:
         self.cartesian_state: Optional[CartesianState] = None
         self.previous_position = None
 
+        # evasive mode
+        self.evasive_active = False
+
         # Obstacle and prediction settings
         self.obstacle_positions = []
         self.obstacle_predictions_covariance = [[0.1, 0.0], [0.0, 0.1]]
@@ -271,6 +274,10 @@ class FrenetixMotionPlanner:
         """
         if reference_path is None or len(reference_path) == 0:
             self.logger.info("Received empty reference path, ignoring.")
+            return False
+        
+        if self.evasive_active:
+            self.logger.info("Evasive mode active, ignoring reference path update.")
             return False
 
         current_endpoint = reference_path[-1]
@@ -839,7 +846,7 @@ class FrenetixMotionPlanner:
         return False, "Following"
   
     def cyclic_plan(self):
-        """p
+        """
         This is the main entry point from the node.
         It decides IF to replan, FROM WHERE to replan, and then calls _plan.
         If no replan is needed, it returns the previously cached trajectory.
@@ -849,8 +856,6 @@ class FrenetixMotionPlanner:
                               f"{self.coordinate_system_cpp is not None}, RefPath: {self.reference_path is not None}")
             self.last_planned_trajectory = None
             return None
-        
-        self.logger.error(f"CoSy: {self.coordinate_system_cpp is not None}, RefPath: {self.reference_path is not None}")
 
         # Get the current ego state in curvilinear coordinates
         current_curvilinear_state = self._get_current_curvilinear_state()

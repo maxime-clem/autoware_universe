@@ -57,8 +57,6 @@ class FrenetixPlanner(Node):
         self.latest_autoware_traj = None
         self.stop_wall_xy = None
         self.last_selected_source = None
-        # Evasive mode state (latched when True until release condition is met)
-        self.evasive_active = False
     
     @property
     def route(self):
@@ -71,6 +69,14 @@ class FrenetixPlanner(Node):
     @property
     def logger(self):
         return self.get_logger()
+    
+    @property
+    def evasive_active(self):
+        return self.planner.evasive_active
+    
+    @evasive_active.setter
+    def evasive_active(self, value: bool):
+        self.planner.evasive_active = value
 
     def _declare_and_load_params(self) -> FrenetixPlannerParams:
         """
@@ -182,10 +188,6 @@ class FrenetixPlanner(Node):
 
     # Callback for reference path messages
     def reference_path_callback(self, reference_trajectory_msg):
-        # when we are in evasive mode, ignore reference path updates
-        # if self.evasive_active:
-        #     self.get_logger().warn("------- [Evasive] Ignoring reference path update -------")
-        #     return
         
         self.get_logger().debug(f"Received reference path message with {len(reference_trajectory_msg.points)} points.")
         
