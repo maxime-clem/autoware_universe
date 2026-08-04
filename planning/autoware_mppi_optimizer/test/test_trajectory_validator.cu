@@ -19,9 +19,13 @@
 #include <cuda_runtime_api.h>
 #include <gtest/gtest.h>
 
+#include <algorithm>
 #include <array>
+#include <cmath>
 #include <cstddef>
 #include <memory>
+#include <optional>
+#include <string>
 #include <vector>
 
 namespace autoware::mppi_optimizer
@@ -72,6 +76,9 @@ protected:
     std::array<float, kTestHorizon> y{};
     std::array<float, kTestHorizon> velocity{};
     std::array<float, kTestHorizon> yaw{};
+    for (int i = 0; i < kTestHorizon; ++i) {
+      x[static_cast<std::size_t>(i)] = 0.2F * static_cast<float>(i + 1);
+    }
     cost_->setReferenceTrajectory(x.data(), y.data(), velocity.data(), kTestHorizon, yaw.data());
   }
 
@@ -113,6 +120,147 @@ TEST_F(TrajectoryValidatorTest, AppliesBoundaryThresholdSymmetricallyAndInclusiv
       !test_case.valid)
       << "offset=" << test_case.lateral_offset;
   }
+}
+
+TEST_F(TrajectoryValidatorTest, IgnoresLongitudinalLagOnCurvesWhenCheckingLateralBoundary)
+{
+  auto params = makeParams();
+  params.boundary_threshold = 0.1F;
+  cost_->setParams(params);
+
+  constexpr float kPi = 3.14159265358979323846F;
+  constexpr float kRadius = 2.0F;
+  constexpr int kArcEndIndex = 6;
+  std::array<float, kTestHorizon> reference_x{};
+  std::array<float, kTestHorizon> reference_y{};
+  std::array<float, kTestHorizon> reference_velocity{};
+  std::array<float, kTestHorizon> reference_yaw{};
+  for (int i = 0; i < kTestHorizon; ++i) {
+    const int arc_index = std::min(i, kArcEndIndex);
+    const float angle = static_cast<float>(arc_index) * kPi / 12.0F;
+    reference_x[static_cast<std::size_t>(i)] = kRadius * std::sin(angle);
+    reference_y[static_cast<std::size_t>(i)] = kRadius * (1.0F - std::cos(angle));
+    reference_yaw[static_cast<std::size_t>(i)] = angle;
+  }
+  cost_->setReferenceTrajectory(
+    reference_x.data(), reference_y.data(), reference_velocity.data(), kTestHorizon,
+    reference_yaw.data());
+
+  std::vector<detail::OptimizedState> states;
+  states.reserve(static_cast<std::size_t>(kArcEndIndex + 1));
+  for (int i = 0; i <= kArcEndIndex; ++i) {
+    detail::OptimizedState state;
+    state.x = reference_x[static_cast<std::size_t>(i)];
+    state.y = reference_y[static_cast<std::size_t>(i)];
+    state.yaw = reference_yaw[static_cast<std::size_t>(i)];
+    states.push_back(state);
+  }
+
+  constexpr int kCheckedTimestep = 6;
+  constexpr int kLaggedReferenceIndex = kCheckedTimestep - 2;
+  auto & lagged_state = states[static_cast<std::size_t>(kCheckedTimestep)];
+  lagged_state.x = reference_x[static_cast<std::size_t>(kLaggedReferenceIndex)];
+  lagged_state.y = reference_y[static_cast<std::size_t>(kLaggedReferenceIndex)];
+  lagged_state.yaw = reference_yaw[static_cast<std::size_t>(kLaggedReferenceIndex)];
+
+  EXPECT_NEAR(
+    cost_->computeLocalLateralDistanceValue(lagged_state.x, lagged_state.y, kCheckedTimestep), 0.0F,
+    1.0E-6F);
+  EXPECT_FALSE(cost_->exceedsLateralBoundary(lagged_state.x, lagged_state.y, kCheckedTimestep));
+  EXPECT_TRUE(detail::validateOptimizedTrajectory(*cost_, states).isValid());
+
+  constexpr int kSegmentIndex = 4;
+  const float segment_dx = reference_x[kSegmentIndex + 1] - reference_x[kSegmentIndex];
+  const float segment_dy = reference_y[kSegmentIndex + 1] - reference_y[kSegmentIndex];
+  const float segment_length = std::hypot(segment_dx, segment_dy);
+  const float midpoint_x = 0.5F * (reference_x[kSegmentIndex] + reference_x[kSegmentIndex + 1]);
+  const float midpoint_y = 0.5F * (reference_y[kSegmentIndex] + reference_y[kSegmentIndex + 1]);
+  const float outward_normal_x = segment_dy / segment_length;
+  const float outward_normal_y = -segment_dx / segment_length;
+  EXPECT_FALSE(cost_->exceedsLateralBoundary(
+    midpoint_x + 0.08F * outward_normal_x, midpoint_y + 0.08F * outward_normal_y, kSegmentIndex));
+  EXPECT_TRUE(cost_->exceedsLateralBoundary(
+    midpoint_x + 0.12F * outward_normal_x, midpoint_y + 0.12F * outward_normal_y, kSegmentIndex));
+}
+
+TEST_F(TrajectoryValidatorTest, UsesNearestPointOnSegmentRatherThanNearestSample)
+{
+  auto params = makeParams();
+  params.boundary_threshold = 0.01F;
+  cost_->setParams(params);
+
+  std::array<float, kTestHorizon> reference_x{};
+  std::array<float, kTestHorizon> reference_y{};
+  std::array<float, kTestHorizon> reference_velocity{};
+  std::array<float, kTestHorizon> reference_yaw{};
+  reference_x[0] = 0.0F;
+  reference_y[0] = 0.0F;
+  for (int i = 1; i < kTestHorizon; ++i) {
+    reference_x[static_cast<std::size_t>(i)] = 2.0F;
+    reference_y[static_cast<std::size_t>(i)] = 2.0F;
+  }
+  cost_->setReferenceTrajectory(
+    reference_x.data(), reference_y.data(), reference_velocity.data(), kTestHorizon,
+    reference_yaw.data());
+
+  EXPECT_NEAR(cost_->computeLocalLateralDistanceValue(1.0F, 1.0F, 0), 0.0F, 1.0E-6F);
+  EXPECT_FALSE(cost_->exceedsLateralBoundary(1.0F, 1.0F, 0));
+}
+
+TEST_F(TrajectoryValidatorTest, DoesNotMatchTemporallyDistantParallelBranch)
+{
+  auto params = makeParams();
+  params.boundary_threshold = 0.5F;
+  cost_->setParams(params);
+
+  std::array<float, kTestHorizon> reference_x{};
+  std::array<float, kTestHorizon> reference_y{};
+  std::array<float, kTestHorizon> reference_velocity{};
+  std::array<float, kTestHorizon> reference_yaw{};
+  for (int i = 0; i < kTestHorizon / 2; ++i) {
+    reference_x[static_cast<std::size_t>(i)] = 0.2F * static_cast<float>(i);
+    reference_y[static_cast<std::size_t>(i)] = 0.0F;
+  }
+  for (int i = kTestHorizon / 2; i < kTestHorizon; ++i) {
+    reference_x[static_cast<std::size_t>(i)] = 0.2F * static_cast<float>(kTestHorizon - 1 - i);
+    reference_y[static_cast<std::size_t>(i)] = 1.0F;
+    reference_yaw[static_cast<std::size_t>(i)] = 3.14159265358979323846F;
+  }
+  cost_->setReferenceTrajectory(
+    reference_x.data(), reference_y.data(), reference_velocity.data(), kTestHorizon,
+    reference_yaw.data());
+
+  constexpr float kStateX = 2.0F;
+  constexpr float kStateY = 1.0F;
+  constexpr int kTimestep = 10;
+  EXPECT_NEAR(cost_->computeLateralDistanceValue(kStateX, kStateY), 0.0F, 1.0E-6F);
+  EXPECT_NEAR(cost_->computeLocalLateralDistanceValue(kStateX, kStateY, kTimestep), 1.0F, 1.0E-6F);
+  EXPECT_TRUE(cost_->exceedsLateralBoundary(kStateX, kStateY, kTimestep));
+}
+
+TEST_F(TrajectoryValidatorTest, HandlesDuplicatedReferencePoints)
+{
+  auto params = makeParams();
+  params.boundary_threshold = 0.01F;
+  cost_->setParams(params);
+
+  std::array<float, kTestHorizon> reference_x{};
+  std::array<float, kTestHorizon> reference_y{};
+  std::array<float, kTestHorizon> reference_velocity{};
+  std::array<float, kTestHorizon> reference_yaw{};
+  reference_x[0] = 0.0F;
+  reference_x[1] = 0.0F;
+  for (int i = 2; i < kTestHorizon; ++i) {
+    reference_x[static_cast<std::size_t>(i)] = 1.0F;
+  }
+  cost_->setReferenceTrajectory(
+    reference_x.data(), reference_y.data(), reference_velocity.data(), kTestHorizon,
+    reference_yaw.data());
+
+  const float distance = cost_->computeLocalLateralDistanceValue(0.5F, 0.0F, 1);
+  EXPECT_TRUE(std::isfinite(distance));
+  EXPECT_NEAR(distance, 0.0F, 1.0E-6F);
+  EXPECT_FALSE(cost_->exceedsLateralBoundary(0.5F, 0.0F, 1));
 }
 
 TEST_F(TrajectoryValidatorTest, RoadBorderMarginInflatesTheEgoFootprint)
@@ -189,12 +337,12 @@ TEST_F(TrajectoryValidatorTest, DetectsLateralBoundaryViolationsAcrossHorizonAnd
   test_cases.push_back(
     {"invalid_at_start_left", std::vector<float>(kTestHorizon, -0.60F), false, 0U});
 
-  // Case 3: Progressive drift that starts valid (y=0) and breaches 0.50F at mid-horizon (step 6)
+  // Case 3: Progressive drift is below 0.50F at step 5 and breaches it at step 6.
   {
     std::vector<float> drift(kTestHorizon, 0.0F);
     for (int i = 0; i < kTestHorizon; ++i) {
       drift[static_cast<std::size_t>(i)] =
-        0.10F * static_cast<float>(i);  // Breaches 0.50F at i=6 (0.60F)
+        0.09F * static_cast<float>(i);  // 0.45F at i=5; 0.54F at i=6.
     }
     test_cases.push_back({"progressive_drift_mid_horizon", drift, false, 6U});
   }

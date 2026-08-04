@@ -112,16 +112,19 @@ public:
    */
   __host__ __device__ float computeLateralDistanceValue(float x, float y) const;
 
+  /** Minimum point-to-segment distance in a +/-3 timestep segment window. */
+  __host__ __device__ float computeLocalLateralDistanceValue(float x, float y, int timestep) const;
+
   /**
    * Pre time-indexed heading: squared yaw error vs the tangent of the closest
    * reference segment. Used by lateral_yaw_error_coeff.
    */
   __host__ __device__ float computeLateralYawErrorValue(float x, float y, float yaw) const;
 
-  /** Signed lateral error from ref[t], resolved in ref_yaw[t] (+ = reference-left). */
+  /** Time-indexed signed lateral diagnostic; boundary validation uses local segment distance. */
   __host__ __device__ float computeSignedLateralOffset(float x, float y, int timestep) const;
 
-  /** True if the time-aligned lateral error exceeds boundary_threshold(_left/_right). */
+  /** True if local point-to-segment distance meets or exceeds boundary_threshold. */
   __host__ __device__ bool exceedsLateralBoundary(const float x, const float y, int timestep) const;
 
   __host__ __device__ bool egoIntersectsObstacleAtStep(

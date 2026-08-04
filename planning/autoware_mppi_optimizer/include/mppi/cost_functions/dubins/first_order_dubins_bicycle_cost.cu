@@ -336,6 +336,38 @@ __host__ __device__ float FirstOrderDubinsBicycleCostImpl<
 }
 
 template <class CLASS_T, int NUM_TIMESTEPS, class PARAMS_T, class DYN_PARAMS_T>
+__host__ __device__ float
+FirstOrderDubinsBicycleCostImpl<CLASS_T, NUM_TIMESTEPS, PARAMS_T, DYN_PARAMS_T>::
+  computeLocalLateralDistanceValue(const float x, const float y, const int timestep) const
+{
+  if (NUM_TIMESTEPS <= 1) {
+    return vectorLength(x - ref_x_[0], y - ref_y_[0]);
+  }
+
+  constexpr int kWindowRadius = 3;
+  const int t = timestep < 0 ? 0 : (timestep >= NUM_TIMESTEPS ? NUM_TIMESTEPS - 1 : timestep);
+  const int last_segment_idx = NUM_TIMESTEPS - 2;
+  const int start_segment_idx = t > kWindowRadius ? t - kWindowRadius : 0;
+  const int end_segment_idx =
+    t + kWindowRadius < last_segment_idx ? t + kWindowRadius : last_segment_idx;
+
+  float min_distance = 1.0E8F;
+#ifdef __CUDA_ARCH__
+#pragma unroll
+#endif
+  for (int i = start_segment_idx; i <= end_segment_idx; ++i) {
+    const float segment_distance =
+      distancePointToSegment(x, y, ref_x_[i], ref_y_[i], ref_x_[i + 1], ref_y_[i + 1]);
+#ifdef __CUDA_ARCH__
+    min_distance = fminf(min_distance, segment_distance);
+#else
+    min_distance = std::min(min_distance, segment_distance);
+#endif
+  }
+  return min_distance;
+}
+
+template <class CLASS_T, int NUM_TIMESTEPS, class PARAMS_T, class DYN_PARAMS_T>
 __host__ __device__ float FirstOrderDubinsBicycleCostImpl<
   CLASS_T, NUM_TIMESTEPS, PARAMS_T,
   DYN_PARAMS_T>::computeLateralYawErrorValue(const float x, const float y, const float yaw) const
@@ -399,14 +431,9 @@ __host__ __device__ float FirstOrderDubinsBicycleCostImpl<
 template <class CLASS_T, int NUM_TIMESTEPS, class PARAMS_T, class DYN_PARAMS_T>
 __host__ __device__ bool FirstOrderDubinsBicycleCostImpl<
   CLASS_T, NUM_TIMESTEPS, PARAMS_T,
-  DYN_PARAMS_T>::exceedsLateralBoundary(const float x, const float y, int timestep) const
+  DYN_PARAMS_T>::exceedsLateralBoundary(const float x, const float y, const int timestep) const
 {
-  const float signed_lat = computeSignedLateralOffset(x, y, timestep);
-#ifdef __CUDA_ARCH__
-  return fabsf(signed_lat) >= this->params_.boundary_threshold;
-#else
-  return std::fabs(signed_lat) >= this->params_.boundary_threshold;
-#endif
+  return computeLocalLateralDistanceValue(x, y, timestep) >= this->params_.boundary_threshold;
 }
 
 template <class CLASS_T, int NUM_TIMESTEPS, class PARAMS_T, class DYN_PARAMS_T>

@@ -70,16 +70,6 @@ FirstOrderDubinsMppiOptimizationResult optimize(
     trajectory, odometry, std::nullopt, std::nullopt, tracked_objects, road_borders, {});
 }
 
-Trajectory makeLaterallyOffsetTrajectory(const float first_point_y, const float remaining_y)
-{
-  auto trajectory = makeStraightTrajectory(30U);
-  for (auto & point : trajectory.points) {
-    point.pose.position.y = remaining_y;
-  }
-  trajectory.points.front().pose.position.y = first_point_y;
-  return trajectory;
-}
-
 TrackedObjects makeStationaryBoxObstacle(
   const double x, const double y, const double length, const double width)
 {
@@ -173,7 +163,7 @@ TEST_F(FirstOrderDubinsMppiInterfaceGpuTest, RejectsAtInclusiveLateralBoundaryTh
   options.skip_if_invalid = true;
   interface_->setRuntimeOptions(options);
 
-  const auto input = makeLaterallyOffsetTrajectory(0.0F, 0.5F);
+  const auto input = makeStraightTrajectory(30U);
   auto odometry = makeOdometry();
   odometry.pose.pose.position.y = 0.5;
   const auto result = optimize(*interface_, input, odometry);
@@ -244,7 +234,7 @@ TEST_F(FirstOrderDubinsMppiInterfaceGpuTest, DoesNotRejectInvalidOutputWhenOptio
   options.skip_if_invalid = false;
   interface_->setRuntimeOptions(options);
 
-  const auto input = makeLaterallyOffsetTrajectory(0.0F, 0.5F);
+  const auto input = makeStraightTrajectory(30U);
   auto odometry = makeOdometry();
   odometry.pose.pose.position.y = 0.5;
   const auto result = optimize(*interface_, input, odometry);
@@ -257,7 +247,7 @@ TEST_F(FirstOrderDubinsMppiInterfaceGpuTest, DoesNotRejectInvalidOutputWhenOptio
   EXPECT_TRUE(result.debug.optimized_trajectory == result.trajectory);
 }
 
-TEST_F(FirstOrderDubinsMppiInterfaceGpuTest, RejectsTrajectoriesDeviatingAcrossThresholdRange)
+TEST_F(FirstOrderDubinsMppiInterfaceGpuTest, HandlesInitialOffsetsAcrossThresholdRange)
 {
   FirstOrderDubinsMppiRuntimeOptions options;
   options.skip_if_invalid = true;
@@ -267,24 +257,12 @@ TEST_F(FirstOrderDubinsMppiInterfaceGpuTest, RejectsTrajectoriesDeviatingAcrossT
   {
     float threshold;
     float initial_y_offset;
-    float drift_per_point;  // y_offset += drift * point_index
     bool expect_rejected;
   };
 
   const std::vector<TestCase> test_cases = {
-    // 1. Constant offsets strictly inside threshold -> Accepted
-    {0.50F, 0.30F, 0.00F, false},
-    {0.50F, -0.30F, 0.00F, false},
-    // 2. Constant offsets exceeding threshold -> Rejected
-    {0.50F, 0.60F, 0.00F, true},
-    {0.50F, -0.60F, 0.00F, true},
-    // 3. Starts centered (y=0), but progressively drifts outside threshold along horizon ->
-    // Rejected
-    //    (At point 20, y = 20 * 0.03 = 0.60F > 0.50F threshold)
-    {0.50F, 0.00F, 0.03F, true},
-    {0.50F, 0.00F, -0.03F, true},
-    // 4. Tight threshold (0.10m) -> Rejected even on minor progressive drift
-    {0.10F, 0.00F, 0.01F, true},
+    {0.50F, 0.30F, false}, {0.50F, -0.30F, false}, {0.50F, 0.50F, true}, {0.50F, -0.50F, true},
+    {0.50F, 0.60F, true},  {0.50F, -0.60F, true},  {0.10F, 0.11F, true},
   };
 
   for (std::size_t idx = 0; idx < test_cases.size(); ++idx) {
@@ -293,21 +271,15 @@ TEST_F(FirstOrderDubinsMppiInterfaceGpuTest, RejectsTrajectoriesDeviatingAcrossT
     cost_params.boundary_threshold = tc.threshold;
     interface_->setCostParams(cost_params);
 
-    auto input = makeStraightTrajectory(30U);
-    for (std::size_t i = 0; i < input.points.size(); ++i) {
-      input.points[i].pose.position.y =
-        tc.initial_y_offset + tc.drift_per_point * static_cast<float>(i);
-    }
-
+    const auto input = makeStraightTrajectory(30U);
     auto odometry = makeOdometry();
     odometry.pose.pose.position.y = tc.initial_y_offset;
 
-    // Use TrackedObjects{} to avoid explicit constructor conversion errors
     const auto result = optimize(*interface_, input, odometry, TrackedObjects{}, {});
 
     EXPECT_EQ(result.debug.was_rejected, tc.expect_rejected)
       << "Failed at test case index " << idx << " (threshold=" << tc.threshold
-      << ", init_y=" << tc.initial_y_offset << ", drift=" << tc.drift_per_point << ")";
+      << ", init_y=" << tc.initial_y_offset << ")";
 
     EXPECT_EQ(result.debug.validation.isValid(), !tc.expect_rejected)
       << "Validation mismatch at test case index " << idx;

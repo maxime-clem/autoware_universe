@@ -751,10 +751,12 @@ struct FirstOrderDubinsMppiInterface::Impl
 
   void teardown()
   {
-    if (initialized) {
-      cost.freeCudaMem();
-      initialized = false;
-    }
+    // The controller owns the CUDA lifecycle of the model, cost, feedback controller, and
+    // sampler. Destroy it before a subsequent setup() mutates or reallocates those shared
+    // objects; otherwise replacing controller after setup can let the old controller free the
+    // new controller's allocations.
+    controller.reset();
+    initialized = false;
   }
 };
 
