@@ -25,6 +25,8 @@
 #include <geometry_msgs/msg/accel_with_covariance_stamped.hpp>
 #include <nav_msgs/msg/odometry.hpp>
 
+#include <cstddef>
+#include <cstdint>
 #include <memory>
 #include <optional>
 #include <string>
@@ -60,6 +62,69 @@ struct FirstOrderDubinsMppiRollout
   bool is_worst{false};
 };
 
+enum class FirstOrderDubinsMppiInvalidityReason : std::uint8_t {
+  none = 0U,
+  lateral_boundary = 1U << 0U,
+  obstacle = 1U << 1U,
+  road_border = 1U << 2U,
+};
+
+std::string to_string(FirstOrderDubinsMppiInvalidityReason reason)
+{
+  if (reason == FirstOrderDubinsMppiInvalidityReason::none) {
+    return "none";
+  }
+
+  std::string result;
+  const auto val = static_cast<std::uint8_t>(reason);
+
+  if (val & static_cast<std::uint8_t>(FirstOrderDubinsMppiInvalidityReason::lateral_boundary)) {
+    result += "lateral_boundary | ";
+  }
+  if (val & static_cast<std::uint8_t>(FirstOrderDubinsMppiInvalidityReason::obstacle)) {
+    result += "obstacle | ";
+  }
+  if (val & static_cast<std::uint8_t>(FirstOrderDubinsMppiInvalidityReason::road_border)) {
+    result += "road_border | ";
+  }
+
+  // Remove the trailing " | " if the string is not empty
+  if (!result.empty()) {
+    result.resize(result.size() - 3);
+  } else {
+    // Fallback for an unknown bit pattern
+    result = "unknown(" + std::to_string(val) + ")";
+  }
+
+  return result;
+}
+
+constexpr FirstOrderDubinsMppiInvalidityReason operator|(
+  const FirstOrderDubinsMppiInvalidityReason lhs, const FirstOrderDubinsMppiInvalidityReason rhs)
+{
+  return static_cast<FirstOrderDubinsMppiInvalidityReason>(
+    static_cast<std::uint8_t>(lhs) | static_cast<std::uint8_t>(rhs));
+}
+
+constexpr bool hasInvalidityReason(
+  const FirstOrderDubinsMppiInvalidityReason reasons,
+  const FirstOrderDubinsMppiInvalidityReason reason)
+{
+  return (static_cast<std::uint8_t>(reasons) & static_cast<std::uint8_t>(reason)) != 0U;
+}
+
+struct FirstOrderDubinsMppiValidationResult
+{
+  /** Reasons detected at the first invalid trajectory point. */
+  FirstOrderDubinsMppiInvalidityReason reasons{FirstOrderDubinsMppiInvalidityReason::none};
+  std::optional<std::size_t> first_invalid_index;
+
+  [[nodiscard]] bool isValid() const
+  {
+    return reasons == FirstOrderDubinsMppiInvalidityReason::none;
+  }
+};
+
 struct FirstOrderDubinsMppiDebug
 {
   Trajectory reference_trajectory;
@@ -67,12 +132,10 @@ struct FirstOrderDubinsMppiDebug
   std::vector<std::pair<float, float>> optimal_horizon;
   std::vector<FirstOrderDubinsMppiRollout> rollouts;
   float baseline_cost{0.0F};
-  /**
-   * Host-side collision check of the optimized output trajectory.
-   * 0 = ok, 1 = lateral bound, 2 = obstacle, 3 = road border
-   * (first violation along the horizon; see detectAndLatchCrash).
-   */
-  int crash_status{0};
+  /** Hard-constraint validation of the generated post-step states. */
+  FirstOrderDubinsMppiValidationResult validation;
+  /** True when skip_if_invalid replaced the optimized trajectory with the input trajectory. */
+  bool was_rejected{false};
 };
 
 struct FirstOrderDubinsMppiOptimizationResult

@@ -13,6 +13,7 @@
 // limitations under the License.
 
 #include "autoware/mppi_optimizer/detail/trajectory_utils.hpp"
+#include "autoware/mppi_optimizer/detail/trajectory_validator.hpp"
 #include "autoware/mppi_optimizer/first_order_dubins_mppi_cost_params.hpp"
 #include "autoware/mppi_optimizer/first_order_dubins_mppi_interface.hpp"
 #include "autoware/mppi_optimizer/mppi_debug_trajectory_logger.hpp"
@@ -959,10 +960,11 @@ struct FirstOrderDubinsMppiInterface::Impl
 
   void teardown()
   {
-    if (initialized) {
-      cost.freeCudaMem();
-      initialized = false;
-    }
+    // The controller owns the CUDA lifecycle of the model, cost, feedback controller, and
+    // sampler. Destroy it before setup() reallocates those shared objects; otherwise the old
+    // controller can free allocations created for its replacement.
+    controller.reset();
+    initialized = false;
   }
 };
 
@@ -1282,17 +1284,11 @@ FirstOrderDubinsMppiOptimizationResult FirstOrderDubinsMppiInterface::optimizeTr
   }
 
   Trajectory output = detail::buildOptimizedTrajectory(input, optimized_states, optimized_controls);
+  const auto validation = detail::validateOptimizedTrajectory(impl_->cost, optimized_states);
   float max_pos_delta = 0.0F;
   float max_vel_delta = 0.0F;
-  int crash_status = 0;
   for (size_t i = 0; i < optimized_states.size(); ++i) {
     const auto & state = optimized_states[i];
-    // Always evaluate host-side crash on the optimized output (for debug / retune display).
-    // Rejection below remains gated by skip_if_invalid.
-    if (crash_status == 0) {
-      (void)impl_->cost.detectAndLatchCrash(
-        state.x, state.y, state.yaw, static_cast<int>(i), &crash_status);
-    }
     const auto & in_point = input.points[i];
     const float ref_x = static_cast<float>(in_point.pose.position.x);
     const float ref_y = static_cast<float>(in_point.pose.position.y);
@@ -1310,7 +1306,7 @@ FirstOrderDubinsMppiOptimizationResult FirstOrderDubinsMppiInterface::optimizeTr
   result.trajectory = output;
   result.debug.reference_trajectory = input;
   result.debug.optimized_trajectory = output;
-  result.debug.crash_status = crash_status;
+  result.debug.validation = validation;
   if (impl_->enable_rollout_visualization) {
     buildRolloutVisualization(
       *impl_->controller, impl_->sampler, impl_->model, x_at_optimization,
@@ -1347,27 +1343,29 @@ FirstOrderDubinsMppiOptimizationResult FirstOrderDubinsMppiInterface::optimizeTr
     impl_->logged_delay_accel, impl_->logged_delay_steer, impl_->logged_applied_accel,
     impl_->logged_applied_steer);
 
+  const auto validation_reasons = to_string(result.debug.validation.reasons);
   RCLCPP_INFO(
     mppiLogger(),
     "MPPI tracked diffusion ref in %.1f ms: start_idx=%zu steps=%d output points size=%zu "
     "points=%zu rollouts=%zu "
     "obstacles=%zu road_borders=%zu drivable_segments=%zu u_accel=%.3f u_steer=%.3f "
-    "baseline_cost=%.2f crash_status=%d max_pos_err=%.3f m "
+    "baseline_cost=%.2f crash_status=%s max_pos_err=%.3f m "
     "max_vel_err=%.3f m/s",
     elapsed_ms, impl_->tracking_start_idx, impl_->step_count, output.points.size(), num_points,
     result.debug.rollouts.size(), tracked_objects.objects.size(), road_borders.size(),
     drivable_area.size(), control.accel_cmd, control.steer_cmd, result.debug.baseline_cost,
-    crash_status, max_pos_delta, max_vel_delta);
+    validation_reasons.c_str(), max_pos_delta, max_vel_delta);
 
-  if (impl_->skip_if_invalid && crash_status != 0) {
+  if (impl_->skip_if_invalid && !validation.isValid()) {
     result.trajectory = input;
     result.debug.reference_trajectory = input;
     result.debug.optimized_trajectory = input;
-    // Keep crash_status on debug so offline retune still reports why output was rejected.
+    result.debug.was_rejected = true;
     RCLCPP_WARN(
       mppiLogger(),
-      "MPPI output rejected with crash_status=%d; returning the input trajectory unchanged",
-      crash_status);
+      "MPPI output rejected with invalidity_mask=%u at point=%zu; returning the input trajectory "
+      "unchanged",
+      static_cast<unsigned int>(validation.reasons), validation.first_invalid_index.value());
   }
 
   // Advance the vendor control history after all getControlSeq / getActualStateSeq reads

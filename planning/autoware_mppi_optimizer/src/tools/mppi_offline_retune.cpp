@@ -522,21 +522,6 @@ int run(int argc, char ** argv)
     return 1;
   }
 
-  auto crashStatusLabel = [](const int code) -> const char * {
-    switch (code) {
-      case 0:
-        return "ok";
-      case 1:
-        return "lateral_bound";
-      case 2:
-        return "obstacle";
-      case 3:
-        return "road_border";
-      default:
-        return "unknown";
-    }
-  };
-
   std::ofstream index_out(out_dir + "/index.csv");
   index_out << "frame_id,stamp_sec,stamp_nsec,baseline_cost,n_reference,n_optimized,crash_status\n";
 
@@ -739,19 +724,18 @@ int run(int argc, char ** argv)
       std::ofstream crash_out(crash_path);
       if (crash_out) {
         crash_out << "crash_status,label\n";
-        crash_out << result.debug.crash_status << "," << crashStatusLabel(result.debug.crash_status)
-                  << "\n";
+        crash_out << static_cast<int>(result.debug.validation.reasons) << ","
+                  << to_string(result.debug.validation.reasons) << "\n";
       }
     }
 
     index_out << frame_id << "," << reference.header.stamp.sec << ","
               << reference.header.stamp.nanosec << "," << result.debug.baseline_cost << ","
               << reference.points.size() << "," << result.debug.optimized_trajectory.points.size()
-              << "," << result.debug.crash_status << "\n";
+              << "," << static_cast<int>(result.debug.validation.reasons) << "\n";
     ++processed;
     std::cout << "frame " << frame_id << " baseline_cost=" << result.debug.baseline_cost
-              << " crash_status=" << result.debug.crash_status << " ("
-              << crashStatusLabel(result.debug.crash_status) << ")"
+              << " crash_status=" << to_string(result.debug.validation.reasons)
               << " (min rollout cost among all samples)"
               << " points=" << result.debug.optimized_trajectory.points.size()
               << " rollouts=" << result.debug.rollouts.size() << "\n";
