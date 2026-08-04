@@ -87,6 +87,8 @@ void setInitialEngageVelocity(Trajectory & trajectory);
   const Trajectory & input, const std::vector<OptimizedState> & post_step_states,
   const std::vector<FirstOrderDubinsMppiControl> & controls);
 
+[[nodiscard]] float path_curvature_at(const Trajectory & reference, const size_t idx);
+
 }  // namespace autoware::mppi_optimizer::detail
 
 #endif  // AUTOWARE__MPPI_OPTIMIZER__DETAIL__TRAJECTORY_UTILS_HPP_
