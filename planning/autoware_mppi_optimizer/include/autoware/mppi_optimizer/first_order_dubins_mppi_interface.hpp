@@ -25,6 +25,8 @@
 #include <geometry_msgs/msg/accel_with_covariance_stamped.hpp>
 #include <nav_msgs/msg/odometry.hpp>
 
+#include <cstddef>
+#include <cstdint>
 #include <memory>
 #include <optional>
 #include <string>
@@ -60,6 +62,39 @@ struct FirstOrderDubinsMppiRollout
   bool is_worst{false};
 };
 
+enum class FirstOrderDubinsMppiInvalidityReason : std::uint8_t {
+  none = 0U,
+  lateral_boundary = 1U << 0U,
+  obstacle = 1U << 1U,
+  road_border = 1U << 2U,
+};
+
+constexpr FirstOrderDubinsMppiInvalidityReason operator|(
+  const FirstOrderDubinsMppiInvalidityReason lhs, const FirstOrderDubinsMppiInvalidityReason rhs)
+{
+  return static_cast<FirstOrderDubinsMppiInvalidityReason>(
+    static_cast<std::uint8_t>(lhs) | static_cast<std::uint8_t>(rhs));
+}
+
+constexpr bool hasInvalidityReason(
+  const FirstOrderDubinsMppiInvalidityReason reasons,
+  const FirstOrderDubinsMppiInvalidityReason reason)
+{
+  return (static_cast<std::uint8_t>(reasons) & static_cast<std::uint8_t>(reason)) != 0U;
+}
+
+struct FirstOrderDubinsMppiValidationResult
+{
+  /** Reasons detected at the first invalid trajectory point. */
+  FirstOrderDubinsMppiInvalidityReason reasons{FirstOrderDubinsMppiInvalidityReason::none};
+  std::optional<std::size_t> first_invalid_index;
+
+  [[nodiscard]] bool isValid() const
+  {
+    return reasons == FirstOrderDubinsMppiInvalidityReason::none;
+  }
+};
+
 struct FirstOrderDubinsMppiDebug
 {
   Trajectory reference_trajectory;
@@ -67,6 +102,10 @@ struct FirstOrderDubinsMppiDebug
   std::vector<std::pair<float, float>> optimal_horizon;
   std::vector<FirstOrderDubinsMppiRollout> rollouts;
   float baseline_cost{0.0F};
+  /** Hard-constraint validation of the generated post-step states. */
+  FirstOrderDubinsMppiValidationResult validation;
+  /** True when skip_if_invalid replaced the optimized trajectory with the input trajectory. */
+  bool was_rejected{false};
 };
 
 struct FirstOrderDubinsMppiOptimizationResult

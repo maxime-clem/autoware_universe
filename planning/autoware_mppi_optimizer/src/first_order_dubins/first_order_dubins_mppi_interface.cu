@@ -13,6 +13,7 @@
 // limitations under the License.
 
 #include "autoware/mppi_optimizer/detail/trajectory_utils.hpp"
+#include "autoware/mppi_optimizer/detail/trajectory_validator.hpp"
 #include "autoware/mppi_optimizer/first_order_dubins_mppi_cost_params.hpp"
 #include "autoware/mppi_optimizer/first_order_dubins_mppi_interface.hpp"
 #include "autoware/mppi_optimizer/mppi_debug_trajectory_logger.hpp"
@@ -1036,15 +1037,11 @@ FirstOrderDubinsMppiOptimizationResult FirstOrderDubinsMppiInterface::optimizeTr
   }
 
   Trajectory output = detail::buildOptimizedTrajectory(input, optimized_states, optimized_controls);
+  const auto validation = detail::validateOptimizedTrajectory(impl_->cost, optimized_states);
   float max_pos_delta = 0.0F;
   float max_vel_delta = 0.0F;
-  int crash_status = 0;
   for (size_t i = 0; i < optimized_states.size(); ++i) {
     const auto & state = optimized_states[i];
-    if (impl_->skip_if_invalid && crash_status == 0) {
-      (void)impl_->cost.detectAndLatchCrash(
-        state.x, state.y, state.yaw, static_cast<int>(i), &crash_status);
-    }
     const auto & in_point = input.points[i];
     const float ref_x = static_cast<float>(in_point.pose.position.x);
     const float ref_y = static_cast<float>(in_point.pose.position.y);
@@ -1062,6 +1059,7 @@ FirstOrderDubinsMppiOptimizationResult FirstOrderDubinsMppiInterface::optimizeTr
   result.trajectory = output;
   result.debug.reference_trajectory = input;
   result.debug.optimized_trajectory = output;
+  result.debug.validation = validation;
   if (impl_->enable_rollout_visualization) {
     buildRolloutVisualization(
       *impl_->controller, impl_->sampler, impl_->model, x_at_optimization,
@@ -1097,14 +1095,16 @@ FirstOrderDubinsMppiOptimizationResult FirstOrderDubinsMppiInterface::optimizeTr
     drivable_area.size(), control.accel_cmd, control.steer_cmd, result.debug.baseline_cost,
     max_pos_delta, max_vel_delta);
 
-  if (impl_->skip_if_invalid && crash_status != 0) {
+  if (impl_->skip_if_invalid && !validation.isValid()) {
     result.trajectory = input;
     result.debug.reference_trajectory = input;
     result.debug.optimized_trajectory = input;
+    result.debug.was_rejected = true;
     RCLCPP_WARN(
       mppiLogger(),
-      "MPPI output rejected with crash_status=%d; returning the input trajectory unchanged",
-      crash_status);
+      "MPPI output rejected with invalidity_mask=%u at point=%zu; returning the input trajectory "
+      "unchanged",
+      static_cast<unsigned int>(validation.reasons), validation.first_invalid_index.value());
   }
 
   // Advance the vendor control history after all getControlSeq / getActualStateSeq reads

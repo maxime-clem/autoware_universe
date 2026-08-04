@@ -15,11 +15,14 @@
 #include "autoware/mppi_optimizer/detail/trajectory_utils.hpp"
 #include "autoware/mppi_optimizer/first_order_dubins_mppi_interface.hpp"
 
+#include <autoware_perception_msgs/autoware_perception_msgs/msg/detail/tracked_objects__struct.hpp>
+
 #include <cuda_runtime_api.h>
 #include <gtest/gtest.h>
 
 #include <cmath>
 #include <cstddef>
+#include <cstdint>
 #include <memory>
 #include <optional>
 #include <vector>
@@ -59,10 +62,36 @@ Odometry makeOdometry()
 
 FirstOrderDubinsMppiOptimizationResult optimize(
   FirstOrderDubinsMppiInterface & interface, const Trajectory & trajectory,
+  const Odometry & odometry = makeOdometry(),
+  const TrackedObjects & tracked_objects = TrackedObjects{},
   const std::vector<Segment> & road_borders = {})
 {
   return interface.optimizeTrajectory(
-    trajectory, makeOdometry(), std::nullopt, std::nullopt, TrackedObjects{}, road_borders, {});
+    trajectory, odometry, std::nullopt, std::nullopt, tracked_objects, road_borders, {});
+}
+
+Trajectory makeLaterallyOffsetTrajectory(const float first_point_y, const float remaining_y)
+{
+  auto trajectory = makeStraightTrajectory(30U);
+  for (auto & point : trajectory.points) {
+    point.pose.position.y = remaining_y;
+  }
+  trajectory.points.front().pose.position.y = first_point_y;
+  return trajectory;
+}
+
+TrackedObjects makeStationaryBoxObstacle(
+  const double x, const double y, const double length, const double width)
+{
+  TrackedObjects objects;
+  objects.objects.emplace_back();
+  auto & object = objects.objects.back();
+  object.kinematics.pose_with_covariance.pose.position.x = x;
+  object.kinematics.pose_with_covariance.pose.position.y = y;
+  object.kinematics.pose_with_covariance.pose.orientation.w = 1.0;
+  object.shape.dimensions.x = length;
+  object.shape.dimensions.y = width;
+  return objects;
 }
 
 TEST(FirstOrderDubinsMppiInterface, SkippedInputsDoNotInitializeCuda)
@@ -109,6 +138,8 @@ TEST_F(FirstOrderDubinsMppiInterfaceGpuTest, ProducesFinitePostStepTrajectoryAnd
   EXPECT_TRUE(result.debug.optimized_trajectory == result.trajectory);
   EXPECT_TRUE(result.debug.rollouts.empty());
   EXPECT_TRUE(std::isfinite(result.debug.baseline_cost));
+  EXPECT_TRUE(result.debug.validation.isValid());
+  EXPECT_FALSE(result.debug.was_rejected);
   EXPECT_EQ(result.debug.optimal_horizon.size(), static_cast<std::size_t>(detail::kMppiHorizon));
 
   const auto & first = result.trajectory.points.front();
@@ -133,21 +164,162 @@ TEST_F(FirstOrderDubinsMppiInterfaceGpuTest, ProducesFinitePostStepTrajectoryAnd
   }
 }
 
-TEST_F(FirstOrderDubinsMppiInterfaceGpuTest, ReturnsInputWhenFirstPostStepHitsRoadBorder)
+TEST_F(FirstOrderDubinsMppiInterfaceGpuTest, RejectsAtInclusiveLateralBoundaryThreshold)
 {
+  FirstOrderDubinsMppiCostParams cost_params;
+  cost_params.boundary_threshold = 0.5F;
+  interface_->setCostParams(cost_params);
   FirstOrderDubinsMppiRuntimeOptions options;
   options.skip_if_invalid = true;
   interface_->setRuntimeOptions(options);
 
-  const auto input = makeStraightTrajectory(30U);
-  const Segment crossing_border{0.2F, -2.0F, 0.2F, 2.0F};
-  const auto result = optimize(*interface_, input, {crossing_border});
+  const auto input = makeLaterallyOffsetTrajectory(0.0F, 0.5F);
+  auto odometry = makeOdometry();
+  odometry.pose.pose.position.y = 0.5;
+  const auto result = optimize(*interface_, input, odometry);
 
   EXPECT_TRUE(interface_->isInitialized());
   EXPECT_TRUE(result.trajectory == input);
   EXPECT_TRUE(result.debug.reference_trajectory == input);
   EXPECT_TRUE(result.debug.optimized_trajectory == input);
+  EXPECT_TRUE(result.debug.was_rejected);
+  EXPECT_TRUE(hasInvalidityReason(
+    result.debug.validation.reasons, FirstOrderDubinsMppiInvalidityReason::lateral_boundary));
+  ASSERT_TRUE(result.debug.validation.first_invalid_index.has_value());
+  EXPECT_EQ(result.debug.validation.first_invalid_index.value(), 0U);
   EXPECT_TRUE(std::isfinite(result.debug.baseline_cost));
+}
+
+TEST_F(FirstOrderDubinsMppiInterfaceGpuTest, RejectsRoadBorderInsideConfiguredMargin)
+{
+  FirstOrderDubinsMppiCostParams cost_params;
+  cost_params.boundary_threshold = 100.0F;
+  cost_params.road_border_collision_margin = 0.2F;
+  interface_->setCostParams(cost_params);
+  FirstOrderDubinsMppiRuntimeOptions options;
+  options.skip_if_invalid = true;
+  interface_->setRuntimeOptions(options);
+
+  const auto input = makeStraightTrajectory(30U);
+  const Segment border_outside_physical_footprint{-1.0F, 0.31F, 2.0F, 0.31F};
+  const auto result = optimize(
+    *interface_, input, makeOdometry(), TrackedObjects{}, {border_outside_physical_footprint});
+
+  EXPECT_TRUE(result.trajectory == input);
+  EXPECT_TRUE(result.debug.was_rejected);
+  EXPECT_TRUE(hasInvalidityReason(
+    result.debug.validation.reasons, FirstOrderDubinsMppiInvalidityReason::road_border));
+  ASSERT_TRUE(result.debug.validation.first_invalid_index.has_value());
+  EXPECT_EQ(result.debug.validation.first_invalid_index.value(), 0U);
+}
+
+TEST_F(FirstOrderDubinsMppiInterfaceGpuTest, RejectsObjectInsideConfiguredMargin)
+{
+  FirstOrderDubinsMppiCostParams cost_params;
+  cost_params.boundary_threshold = 100.0F;
+  cost_params.obstacle_collision_margin = 0.2F;
+  interface_->setCostParams(cost_params);
+  FirstOrderDubinsMppiRuntimeOptions options;
+  options.skip_if_invalid = true;
+  interface_->setRuntimeOptions(options);
+
+  const auto input = makeStraightTrajectory(30U);
+  const auto objects = makeStationaryBoxObstacle(0.4, 0.41, 0.2, 0.2);
+  const auto result = optimize(*interface_, input, makeOdometry(), objects);
+
+  EXPECT_TRUE(result.trajectory == input);
+  EXPECT_TRUE(result.debug.was_rejected);
+  EXPECT_TRUE(hasInvalidityReason(
+    result.debug.validation.reasons, FirstOrderDubinsMppiInvalidityReason::obstacle));
+  ASSERT_TRUE(result.debug.validation.first_invalid_index.has_value());
+  EXPECT_EQ(result.debug.validation.first_invalid_index.value(), 0U);
+}
+
+TEST_F(FirstOrderDubinsMppiInterfaceGpuTest, DoesNotRejectInvalidOutputWhenOptionIsDisabled)
+{
+  FirstOrderDubinsMppiCostParams cost_params;
+  cost_params.boundary_threshold = 0.5F;
+  interface_->setCostParams(cost_params);
+  FirstOrderDubinsMppiRuntimeOptions options;
+  options.skip_if_invalid = false;
+  interface_->setRuntimeOptions(options);
+
+  const auto input = makeLaterallyOffsetTrajectory(0.0F, 0.5F);
+  auto odometry = makeOdometry();
+  odometry.pose.pose.position.y = 0.5;
+  const auto result = optimize(*interface_, input, odometry);
+
+  EXPECT_FALSE(result.debug.validation.isValid());
+  EXPECT_TRUE(hasInvalidityReason(
+    result.debug.validation.reasons, FirstOrderDubinsMppiInvalidityReason::lateral_boundary));
+  EXPECT_FALSE(result.debug.was_rejected);
+  EXPECT_FALSE(result.trajectory == input);
+  EXPECT_TRUE(result.debug.optimized_trajectory == result.trajectory);
+}
+
+TEST_F(FirstOrderDubinsMppiInterfaceGpuTest, RejectsTrajectoriesDeviatingAcrossThresholdRange)
+{
+  FirstOrderDubinsMppiRuntimeOptions options;
+  options.skip_if_invalid = true;
+  interface_->setRuntimeOptions(options);
+
+  struct TestCase
+  {
+    float threshold;
+    float initial_y_offset;
+    float drift_per_point;  // y_offset += drift * point_index
+    bool expect_rejected;
+  };
+
+  const std::vector<TestCase> test_cases = {
+    // 1. Constant offsets strictly inside threshold -> Accepted
+    {0.50F, 0.30F, 0.00F, false},
+    {0.50F, -0.30F, 0.00F, false},
+    // 2. Constant offsets exceeding threshold -> Rejected
+    {0.50F, 0.60F, 0.00F, true},
+    {0.50F, -0.60F, 0.00F, true},
+    // 3. Starts centered (y=0), but progressively drifts outside threshold along horizon ->
+    // Rejected
+    //    (At point 20, y = 20 * 0.03 = 0.60F > 0.50F threshold)
+    {0.50F, 0.00F, 0.03F, true},
+    {0.50F, 0.00F, -0.03F, true},
+    // 4. Tight threshold (0.10m) -> Rejected even on minor progressive drift
+    {0.10F, 0.00F, 0.01F, true},
+  };
+
+  for (std::size_t idx = 0; idx < test_cases.size(); ++idx) {
+    const auto & tc = test_cases[idx];
+    FirstOrderDubinsMppiCostParams cost_params;
+    cost_params.boundary_threshold = tc.threshold;
+    interface_->setCostParams(cost_params);
+
+    auto input = makeStraightTrajectory(30U);
+    for (std::size_t i = 0; i < input.points.size(); ++i) {
+      input.points[i].pose.position.y =
+        tc.initial_y_offset + tc.drift_per_point * static_cast<float>(i);
+    }
+
+    auto odometry = makeOdometry();
+    odometry.pose.pose.position.y = tc.initial_y_offset;
+
+    // Use TrackedObjects{} to avoid explicit constructor conversion errors
+    const auto result = optimize(*interface_, input, odometry, TrackedObjects{}, {});
+
+    EXPECT_EQ(result.debug.was_rejected, tc.expect_rejected)
+      << "Failed at test case index " << idx << " (threshold=" << tc.threshold
+      << ", init_y=" << tc.initial_y_offset << ", drift=" << tc.drift_per_point << ")";
+
+    EXPECT_EQ(result.debug.validation.isValid(), !tc.expect_rejected)
+      << "Validation mismatch at test case index " << idx;
+
+    if (tc.expect_rejected) {
+      EXPECT_TRUE(result.trajectory == input)
+        << "Rejected trajectory was not properly reverted to input at index " << idx;
+      EXPECT_TRUE(hasInvalidityReason(
+        result.debug.validation.reasons, FirstOrderDubinsMppiInvalidityReason::lateral_boundary))
+        << "Missing lateral_boundary reason bit at index " << idx;
+    }
+  }
 }
 
 }  // namespace

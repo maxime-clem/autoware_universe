@@ -141,6 +141,8 @@ if(CUDA_AVAIL AND TRT_AVAIL)
   )
 
   if(BUILD_TESTING)
+    ament_find_gtest()
+
     ament_add_gtest(test_first_order_dubins_mppi_interface
       test/test_first_order_dubins_mppi_interface.cpp
     )
@@ -152,6 +154,28 @@ if(CUDA_AVAIL AND TRT_AVAIL)
     set_tests_properties(test_first_order_dubins_mppi_interface PROPERTIES
       LABELS "gpu"
       TIMEOUT 180
+    )
+
+    cuda_add_executable(test_mppi_trajectory_validator
+      test/test_trajectory_validator.cu
+    )
+    target_link_libraries(test_mppi_trajectory_validator
+      first_order_dubins_mppi
+      ${GTEST_LIBRARIES}
+      ${GTEST_MAIN_LIBRARIES}
+    )
+    target_include_directories(test_mppi_trajectory_validator SYSTEM PRIVATE
+      ${GTEST_INCLUDE_DIRS}
+    )
+    set_target_properties(test_mppi_trajectory_validator PROPERTIES
+      CXX_STANDARD 17
+      CUDA_STANDARD 17
+      COMPILE_OPTIONS "-Xcudafe;--diag_suppress=177"
+    )
+    ament_add_gtest_test(test_mppi_trajectory_validator)
+    set_tests_properties(test_mppi_trajectory_validator PROPERTIES
+      LABELS "gpu"
+      TIMEOUT 60
     )
   endif()
 
