@@ -4,6 +4,23 @@ project(autoware_mppi_optimizer)
 find_package(autoware_cmake REQUIRED)
 autoware_package()
 
+ament_auto_add_library(mppi_trajectory_utils SHARED
+  src/first_order_dubins/trajectory_utils.cpp
+)
+
+if(BUILD_TESTING)
+  find_package(ament_cmake_gtest REQUIRED)
+  find_package(ament_lint_auto REQUIRED)
+  ament_lint_auto_find_test_dependencies()
+
+  ament_add_gtest(test_mppi_trajectory_utils
+    test/test_trajectory_utils.cpp
+  )
+  target_link_libraries(test_mppi_trajectory_utils
+    mppi_trajectory_utils
+  )
+endif()
+
 # Find CUDA
 option(CUDA_AVAIL "CUDA available" OFF)
 find_package(CUDA)
@@ -77,6 +94,7 @@ if(CUDA_AVAIL AND TRT_AVAIL)
     SYSTEM ${CUDA_INCLUDE_DIRS}
   )
   target_link_libraries(first_order_dubins_mppi
+    mppi_trajectory_utils
     mppi_extensions
     rclcpp::rclcpp
     tf2_geometry_msgs::tf2_geometry_msgs
@@ -123,8 +141,18 @@ if(CUDA_AVAIL AND TRT_AVAIL)
   )
 
   if(BUILD_TESTING)
-    find_package(ament_lint_auto REQUIRED)
-    ament_lint_auto_find_test_dependencies()
+    ament_add_gtest(test_first_order_dubins_mppi_interface
+      test/test_first_order_dubins_mppi_interface.cpp
+    )
+    target_link_libraries(test_first_order_dubins_mppi_interface
+      first_order_dubins_mppi
+      mppi_trajectory_utils
+      ${CUDA_LIBRARIES}
+    )
+    set_tests_properties(test_first_order_dubins_mppi_interface PROPERTIES
+      LABELS "gpu"
+      TIMEOUT 180
+    )
   endif()
 
   install(TARGETS first_order_dubins_mppi mppi_offline_retune
