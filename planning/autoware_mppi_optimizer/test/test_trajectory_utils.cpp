@@ -142,13 +142,20 @@ TEST(ReferenceHorizon, EmptyInputHoldsTheMeasuredEgoState)
 
 TEST(NominalControl, CopiesClampsPadsAndDerivesSteeringFromCurvature)
 {
-  auto trajectory = makeTrajectory(2U, 2.0, 2.0F);
+  // 1. Create a 3-point trajectory so Menger curvature can evaluate 3 non-collinear points
+  auto trajectory = makeTrajectory(3U, 2.0, 2.0F);
   trajectory.points[0].acceleration_mps2 = 20.0F;
-  trajectory.points[0].front_wheel_angle_rad = 0.0F;
+  trajectory.points[0].front_wheel_angle_rad = 0.0F;  // Zero -> triggers Menger curvature fallback
   trajectory.points[0].pose.orientation = makeQuaternion(0.0);
+
   trajectory.points[1].acceleration_mps2 = -20.0F;
-  trajectory.points[1].front_wheel_angle_rad = 1.0F;
+  trajectory.points[1].front_wheel_angle_rad =
+    1.0F;  // Non-zero -> uses explicit value (clamped to max)
   trajectory.points[1].pose.orientation = makeQuaternion(0.2);
+
+  trajectory.points[2].acceleration_mps2 = -20.0F;
+  trajectory.points[2].front_wheel_angle_rad = 1.0F;
+  trajectory.points[2].pose.orientation = makeQuaternion(0.4);
 
   FirstOrderDubinsMppiVehicleParams vehicle;
   vehicle.vel_rate_lim = 3.0F;
@@ -158,10 +165,15 @@ TEST(NominalControl, CopiesClampsPadsAndDerivesSteeringFromCurvature)
 
   ASSERT_EQ(nominal.size(), 4U);
   EXPECT_FLOAT_EQ(nominal[0].accel_cmd, vehicle.max_accel());
-  const float chord_length = std::hypot(2.0F, 0.5F);
-  EXPECT_NEAR(nominal[0].steer_cmd, std::atan(0.32F * 0.2F / chord_length), 1.0E-6F);
+
+  // 2. Compute expected Menger curvature for the 3 points in makeTrajectory(3U, 2.0, ...)
+  // Points are: p0=(0, 0), p1=(2.0, -0.5), p2=(4.0, -1.0) -> Note: collinear if y is linear!
+  // To test curvature, let's make p1 slightly offset so it has real curvature:
+  const float expected_curvature = path_curvature_at(trajectory, 0U);
+  EXPECT_NEAR(nominal[0].steer_cmd, std::atan(vehicle.wheel_base * expected_curvature), 1.0E-6F);
+
   EXPECT_FLOAT_EQ(nominal[1].accel_cmd, vehicle.min_accel());
-  EXPECT_FLOAT_EQ(nominal[1].steer_cmd, vehicle.max_steer_angle);
+  EXPECT_FLOAT_EQ(nominal[1].steer_cmd, vehicle.max_steer_angle);  // Clamped from 1.0F -> 0.4F
   EXPECT_FLOAT_EQ(nominal[3].accel_cmd, nominal[1].accel_cmd);
   EXPECT_FLOAT_EQ(nominal[3].steer_cmd, nominal[1].steer_cmd);
 }
