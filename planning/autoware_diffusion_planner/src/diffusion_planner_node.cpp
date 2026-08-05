@@ -686,7 +686,7 @@ void DiffusionPlanner::on_timer()
           driving_along_targets, frame_context->ego_kinematic_state.pose.pose.position.z));
       record_section_time(
         *stop_watch_ptr_, "mppi_optimizer/optimize_trajectory", *diagnostics_inference_);
-      const bool apply_mppi = !params_.shadow_mode;
+      const bool apply_mppi = !params_.shadow_mode && !mppi_result.debug.was_rejected;
       if (apply_mppi) {
         planner_output.trajectory = mppi_result.trajectory;
       }
