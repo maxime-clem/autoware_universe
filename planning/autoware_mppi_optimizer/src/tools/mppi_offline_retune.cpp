@@ -155,6 +155,8 @@ void applyCostParam(
     params.steer_cmd_coeff = value;
   } else if (key == "steer_rate_coeff") {
     params.steer_rate_coeff = value;
+  } else if (key == "nominal_curvature_min_chord_length_m") {
+    params.nominal_curvature_min_chord_length_m = value;
   } else if (key == "lateral_acceleration_coeff") {
     params.lateral_acceleration_coeff = value;
   } else if (key == "lateral_jerk_coeff") {
@@ -396,6 +398,7 @@ int run(int argc, char ** argv)
   std::string nominal_csv_override;
   std::optional<uint64_t> frame_filter;
   bool copy_reference = false;
+  bool reseed_nominal_from_reference = false;
   FirstOrderDubinsMppiCostParams cost_params;
   FirstOrderDubinsMppiVehicleParams vehicle_params;
   // Defaults closer to j6_gen2 for Autoware replay.
@@ -450,6 +453,8 @@ int run(int argc, char ** argv)
       copy_reference = true;
     } else if (arg == "--nominal-csv") {
       nominal_csv_override = need("--nominal-csv");
+    } else if (arg == "--reseed-nominal-from-reference") {
+      reseed_nominal_from_reference = true;
     } else {
       std::cerr << "Unknown argument: " << arg << "\n";
       printUsage(argv[0]);
@@ -608,6 +613,27 @@ int run(int argc, char ** argv)
                      "(re-log for exact online match).\n";
         warned_missing_history = true;
       }
+    }
+    const bool force_nominal = !nominal_csv_override.empty() || !reseed_nominal_from_reference;
+    if (force_nominal && loadMppiDebugNominalCsv(nominal_path, nominal_accel, nominal_steer)) {
+      frame_mppi.setForcedNominalControl(nominal_accel, nominal_steer);
+      if (!nominal_csv_override.empty()) {
+        std::cout << "frame " << frame_id << " seeding u_nom from " << nominal_path << "\n";
+      }
+    } else if (force_nominal) {
+      static bool warned_missing_nominal = false;
+      if (!warned_missing_nominal) {
+        std::cerr
+          << "WARNING: missing " << nominal_path
+          << ". Reseeding u_nom from the diffusion "
+             "reference. Re-log with a build that writes *_nominal.csv for faithful warm-start "
+             "replay, or pass --nominal-csv from a prior retune *_seed_nominal.csv.\n";
+        warned_missing_nominal = true;
+      }
+    } else {
+      std::cout << "frame " << frame_id
+                << " reseeding u_nom from reference with nominal curvature chord "
+                << cost_params.nominal_curvature_min_chord_length_m << " m\n";
     }
 
     {

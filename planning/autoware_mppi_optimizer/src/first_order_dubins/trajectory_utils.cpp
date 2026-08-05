@@ -14,8 +14,6 @@
 
 #include "autoware/mppi_optimizer/detail/trajectory_utils.hpp"
 
-#include <autoware_utils_geometry/geometry.hpp>
-
 #include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
 
 #include <tf2/LinearMath/Quaternion.h>
@@ -120,84 +118,69 @@ std::vector<ReferenceSample> buildReferenceHorizon(
   return reference;
 }
 
-float path_curvature_at(const Trajectory & reference, const size_t idx)
+float computeMengerCurvatureWithMinChord(
+  const std::vector<autoware_planning_msgs::msg::TrajectoryPoint> & points,
+  const std::size_t target_idx, const float min_chord_length_m) noexcept
 {
-  constexpr double min_point_distance_squared = 1.0e-8;
-  if (reference.points.size() < 3U) {
+  constexpr double kSideLengthEpsilon = 1.0E-4;
+  constexpr double kMinimumDenominator = 1.0E-8;
+  if (points.size() < 3U || target_idx >= points.size()) {
     return 0.0F;
   }
-  const size_t current_idx = std::min(idx, reference.points.size() - 1U);
-  const auto & current = reference.points[current_idx].pose.position;
-  std::optional<size_t> previous_idx;
-  for (size_t candidate = current_idx; candidate > 0U; --candidate) {
-    const size_t i = candidate - 1U;
-    if (
-      autoware_utils_geometry::calc_squared_distance2d(reference.points[i].pose.position, current) >
-      min_point_distance_squared) {
-      previous_idx = i;
+
+  const double minimum_chord = std::max(0.0, static_cast<double>(min_chord_length_m));
+  const auto & center = points[target_idx].pose.position;
+  const auto distance_from_center = [&center](const auto & point) {
+    return std::hypot(point.pose.position.x - center.x, point.pose.position.y - center.y);
+  };
+
+  std::size_t backward_idx = 0U;
+  for (std::size_t candidate = target_idx; candidate > 0U; --candidate) {
+    const std::size_t index = candidate - 1U;
+    if (distance_from_center(points[index]) >= minimum_chord) {
+      backward_idx = index;
       break;
     }
   }
-  std::optional<size_t> next_idx;
-  for (size_t i = current_idx + 1U; i < reference.points.size(); ++i) {
-    if (
-      autoware_utils_geometry::calc_squared_distance2d(reference.points[i].pose.position, current) >
-      min_point_distance_squared) {
-      next_idx = i;
+
+  std::size_t forward_idx = points.size() - 1U;
+  for (std::size_t index = target_idx + 1U; index < points.size(); ++index) {
+    if (distance_from_center(points[index]) >= minimum_chord) {
+      forward_idx = index;
       break;
     }
   }
-  size_t first_idx = current_idx;
-  size_t middle_idx = current_idx;
-  size_t last_idx = current_idx;
-  if (previous_idx && next_idx) {
-    first_idx = *previous_idx;
-    last_idx = *next_idx;
-  } else if (next_idx) {
-    middle_idx = *next_idx;
-    const auto & middle = reference.points[middle_idx].pose.position;
-    for (size_t i = middle_idx + 1U; i < reference.points.size(); ++i) {
-      if (
-        autoware_utils_geometry::calc_squared_distance2d(
-          reference.points[i].pose.position, middle) > min_point_distance_squared) {
-        last_idx = i;
-        break;
-      }
-    }
-  } else if (previous_idx) {
-    middle_idx = *previous_idx;
-    const auto & middle = reference.points[middle_idx].pose.position;
-    for (size_t candidate = middle_idx; candidate > 0U; --candidate) {
-      const size_t i = candidate - 1U;
-      if (
-        autoware_utils_geometry::calc_squared_distance2d(
-          reference.points[i].pose.position, middle) > min_point_distance_squared) {
-        first_idx = i;
-        break;
-      }
-    }
-  }
-  if (first_idx == middle_idx || middle_idx == last_idx || first_idx == last_idx) {
+
+  if (backward_idx == target_idx || forward_idx == target_idx) {
     return 0.0F;
   }
-  const auto & first = reference.points[first_idx].pose.position;
-  const auto & middle = reference.points[middle_idx].pose.position;
-  const auto & last = reference.points[last_idx].pose.position;
-  const double first_to_middle = autoware_utils_geometry::calc_distance2d(first, middle);
-  const double middle_to_last = autoware_utils_geometry::calc_distance2d(middle, last);
-  const double first_to_last = autoware_utils_geometry::calc_distance2d(first, last);
-  const double denominator = first_to_middle * middle_to_last * first_to_last;
-  if (denominator < 1.0e-8) {
+
+  const auto & first = points[backward_idx].pose.position;
+  const auto & last = points[forward_idx].pose.position;
+  const double first_to_center = std::hypot(center.x - first.x, center.y - first.y);
+  const double center_to_last = std::hypot(last.x - center.x, last.y - center.y);
+  const double first_to_last = std::hypot(last.x - first.x, last.y - first.y);
+  const double denominator = first_to_center * center_to_last * first_to_last;
+  if (
+    first_to_center < kSideLengthEpsilon || center_to_last < kSideLengthEpsilon ||
+    first_to_last < kSideLengthEpsilon || denominator < kMinimumDenominator) {
     return 0.0F;
   }
+
   const double cross =
-    (middle.x - first.x) * (last.y - first.y) - (middle.y - first.y) * (last.x - first.x);
+    (center.x - first.x) * (last.y - first.y) - (center.y - first.y) * (last.x - first.x);
   return static_cast<float>(2.0 * cross / denominator);
+}
+
+float path_curvature_at(const Trajectory & reference, const std::size_t idx) noexcept
+{
+  return computeMengerCurvatureWithMinChord(reference.points, idx);
 }
 
 std::vector<FirstOrderDubinsMppiControl> buildDiffusionNominalControl(
   const Trajectory & reference, const std::size_t start_idx,
-  const FirstOrderDubinsMppiVehicleParams & vehicle_params, const int horizon)
+  const FirstOrderDubinsMppiVehicleParams & vehicle_params, const int horizon,
+  const float min_chord_length_m)
 {
   const int control_count = std::max(0, horizon);
   std::vector<FirstOrderDubinsMppiControl> nominal(static_cast<std::size_t>(control_count));
@@ -214,7 +197,8 @@ std::vector<FirstOrderDubinsMppiControl> buildDiffusionNominalControl(
       std::clamp(point.acceleration_mps2, vehicle_params.min_accel(), vehicle_params.max_accel());
     float steering = point.front_wheel_angle_rad;
     if (std::abs(steering) <= 1.0E-6F) {
-      const float curvature = path_curvature_at(reference, index);
+      const float curvature =
+        computeMengerCurvatureWithMinChord(reference.points, index, min_chord_length_m);
       if (std::isfinite(curvature)) {
         steering = std::atan(vehicle_params.wheel_base * curvature);
       }
