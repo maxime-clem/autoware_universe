@@ -35,6 +35,9 @@ struct FirstOrderDubinsMppiCostParams
   float accel_cmd_coeff{0.0F};
   float steer_cmd_coeff{0.0F};
   float steer_rate_coeff{0.0F};
+  float steer_rate_l2_coeff{0.0F};
+  float steer_accel_coeff{0.0F};
+  float cmd_slew_coeff{0.0F};
   float lateral_acceleration_coeff{300.0F};
   float lateral_jerk_coeff{300.0F};
   float longitudinal_jerk_coeff{10.0F};

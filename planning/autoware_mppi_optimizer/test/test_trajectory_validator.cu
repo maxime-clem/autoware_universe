@@ -36,6 +36,111 @@ namespace
 constexpr int kTestHorizon = detail::kMppiHorizon;
 using TestCost = FirstOrderDubinsBicycleCost<kTestHorizon>;
 using TestCostParams = FirstOrderDubinsBicycleCostParams<kTestHorizon>;
+using CostOutputIndex = FirstOrderDubinsBicycleParams::OutputIndex;
+using CostControlIndex = FirstOrderDubinsBicycleParams::ControlIndex;
+
+TEST(FirstOrderDubinsBicycleSteeringCost, ZeroCoefficientsPreserveLegacyComfortCost)
+{
+  TestCost cost;
+  TestCostParams params;
+  params.steer_rate_l2_coeff = 0.0F;
+  params.steer_accel_coeff = 0.0F;
+  params.cmd_slew_coeff = 0.0F;
+  cost.setParams(params);
+
+  TestCost::control_array control = TestCost::control_array::Zero();
+  TestCost::output_array output = TestCost::output_array::Zero();
+  control(static_cast<int>(CostControlIndex::STEER_CMD)) = 0.2F;
+  output(static_cast<int>(CostOutputIndex::BASELINK_VEL_B_X)) = 2.0F;
+  output(static_cast<int>(CostOutputIndex::STEER_ANGLE)) = 0.1F;
+  output(static_cast<int>(CostOutputIndex::ACCELERATION)) = 0.3F;
+
+  cost.setLastAppliedSteerCommand(-0.4F);
+  const float first_cost = cost.computeComfortCost(control, output, 0);
+  output(static_cast<int>(CostOutputIndex::STEER_RATE)) = 3.0F;
+  output(static_cast<int>(CostOutputIndex::PREVIOUS_STEER_COMMAND)) = -0.4F;
+  output(static_cast<int>(CostOutputIndex::PREVIOUS_STEER_RATE)) = -3.0F;
+  const float second_cost = cost.computeComfortCost(control, output, 0);
+
+  EXPECT_FLOAT_EQ(first_cost, second_cost);
+}
+
+TEST(FirstOrderDubinsBicycleSteeringCost, MatchingBoundaryHasZeroStepZeroSmoothnessCost)
+{
+  TestCost cost;
+  TestCostParams params;
+  params.steer_rate_l2_coeff = 1.0F;
+  params.steer_accel_coeff = 1.0F;
+  params.cmd_slew_coeff = 1.0F;
+  cost.setParams(params);
+
+  constexpr float kSteering = 0.23F;
+  cost.setLastAppliedSteerCommand(kSteering);
+  FirstOrderDubinsBicycle model;
+  FirstOrderDubinsBicycle::state_array state = FirstOrderDubinsBicycle::state_array::Zero();
+  FirstOrderDubinsBicycle::state_array next_state = FirstOrderDubinsBicycle::state_array::Zero();
+  FirstOrderDubinsBicycle::state_array state_der = FirstOrderDubinsBicycle::state_array::Zero();
+  TestCost::control_array control = TestCost::control_array::Zero();
+  TestCost::output_array output = TestCost::output_array::Zero();
+  state(static_cast<int>(FirstOrderDubinsBicycleParams::StateIndex::STEER_ANGLE)) = kSteering;
+  state(static_cast<int>(FirstOrderDubinsBicycleParams::StateIndex::LAST_STEER_COMMAND)) =
+    kSteering;
+  control(static_cast<int>(CostControlIndex::STEER_CMD)) = kSteering;
+  model.step(state, next_state, state_der, control, output, 0.0F, 0.1F);
+
+  const auto terms = cost.computeSteeringSmoothnessCost(control.data(), output.data(), 0);
+  EXPECT_FLOAT_EQ(terms.steer_rate_l2_cost, 0.0F);
+  EXPECT_FLOAT_EQ(terms.cmd_slew_cost, 0.0F);
+  EXPECT_FLOAT_EQ(terms.steer_accel_cost, 0.0F);
+}
+
+TEST(FirstOrderDubinsBicycleSteeringCost, AlternatingCommandsCostMoreThanConstantCommands)
+{
+  TestCost cost;
+  TestCostParams params;
+  params.cmd_slew_coeff = 1.0F;
+  cost.setParams(params);
+  cost.setLastAppliedSteerCommand(0.1F);
+
+  const auto accumulated_slew_cost = [&cost](const std::array<float, 3> & commands) {
+    float total = 0.0F;
+    TestCost::control_array control = TestCost::control_array::Zero();
+    TestCost::output_array output = TestCost::output_array::Zero();
+    for (size_t i = 0; i < commands.size(); ++i) {
+      control(static_cast<int>(CostControlIndex::STEER_CMD)) = commands[i];
+      if (i > 0U) {
+        output(static_cast<int>(CostOutputIndex::PREVIOUS_STEER_COMMAND)) = commands[i - 1U];
+      }
+      total +=
+        cost.computeSteeringSmoothnessCost(control.data(), output.data(), static_cast<int>(i))
+          .cmd_slew_cost;
+    }
+    return total;
+  };
+
+  const float constant_cost = accumulated_slew_cost({0.1F, 0.1F, 0.1F});
+  const float alternating_cost = accumulated_slew_cost({0.1F, -0.1F, 0.1F});
+  EXPECT_FLOAT_EQ(constant_cost, 0.0F);
+  EXPECT_GT(alternating_cost, constant_cost);
+}
+
+TEST(FirstOrderDubinsBicycleSteeringCost, UsesExecutedRateForQuadraticRateAndAcceleration)
+{
+  TestCost cost;
+  TestCostParams params;
+  params.steer_rate_l2_coeff = 2.0F;
+  params.steer_accel_coeff = 3.0F;
+  cost.setParams(params);
+
+  TestCost::control_array control = TestCost::control_array::Zero();
+  TestCost::output_array output = TestCost::output_array::Zero();
+  output(static_cast<int>(CostOutputIndex::STEER_RATE)) = 1.5F;
+  output(static_cast<int>(CostOutputIndex::PREVIOUS_STEER_RATE)) = 0.5F;
+
+  const auto terms = cost.computeSteeringSmoothnessCost(control.data(), output.data(), 1);
+  EXPECT_FLOAT_EQ(terms.steer_rate_l2_cost, 4.5F);
+  EXPECT_NEAR(terms.steer_accel_cost, 300.0F, 1.0E-4F);
+}
 
 class TrajectoryValidatorTest : public ::testing::Test
 {

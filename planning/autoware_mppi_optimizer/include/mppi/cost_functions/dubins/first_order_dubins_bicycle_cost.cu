@@ -83,6 +83,18 @@ void FirstOrderDubinsBicycleCostImpl<
 }
 
 template <class CLASS_T, int NUM_TIMESTEPS, class PARAMS_T, class DYN_PARAMS_T>
+void FirstOrderDubinsBicycleCostImpl<
+  CLASS_T, NUM_TIMESTEPS, PARAMS_T, DYN_PARAMS_T>::setLastAppliedSteerCommand(const float last_cmd)
+{
+  last_applied_steer_cmd_ = last_cmd;
+  if (this->GPUMemStatus_) {
+    HANDLE_ERROR(cudaMemcpyAsync(
+      &this->cost_d_->last_applied_steer_cmd_, &last_applied_steer_cmd_,
+      sizeof(last_applied_steer_cmd_), cudaMemcpyHostToDevice, this->stream_));
+  }
+}
+
+template <class CLASS_T, int NUM_TIMESTEPS, class PARAMS_T, class DYN_PARAMS_T>
 void FirstOrderDubinsBicycleCostImpl<CLASS_T, NUM_TIMESTEPS, PARAMS_T, DYN_PARAMS_T>::dataToDevice()
 {
   if (!this->GPUMemStatus_) {
@@ -97,6 +109,9 @@ void FirstOrderDubinsBicycleCostImpl<CLASS_T, NUM_TIMESTEPS, PARAMS_T, DYN_PARAM
     this->cost_d_->ref_v_, ref_v_, sizeof(ref_v_), cudaMemcpyHostToDevice, this->stream_));
   HANDLE_ERROR(cudaMemcpyAsync(
     this->cost_d_->ref_yaw_, ref_yaw_, sizeof(ref_yaw_), cudaMemcpyHostToDevice, this->stream_));
+  HANDLE_ERROR(cudaMemcpyAsync(
+    &this->cost_d_->last_applied_steer_cmd_, &last_applied_steer_cmd_,
+    sizeof(last_applied_steer_cmd_), cudaMemcpyHostToDevice, this->stream_));
   HANDLE_ERROR(cudaMemcpyAsync(
     &this->cost_d_->num_obstacles_, &num_obstacles_, sizeof(num_obstacles_), cudaMemcpyHostToDevice,
     this->stream_));
@@ -679,22 +694,49 @@ FirstOrderDubinsBicycleCostImpl<CLASS_T, NUM_TIMESTEPS, PARAMS_T, DYN_PARAMS_T>:
 }
 
 template <class CLASS_T, int NUM_TIMESTEPS, class PARAMS_T, class DYN_PARAMS_T>
+__host__ __device__ SteeringSmoothnessCostTerms
+FirstOrderDubinsBicycleCostImpl<CLASS_T, NUM_TIMESTEPS, PARAMS_T, DYN_PARAMS_T>::
+  computeSteeringSmoothnessCost(const float * u, const float * y, const int timestep) const
+{
+  const float steer_rate = y[static_cast<int>(O::STEER_RATE)];
+  const float previous_steer_rate = y[static_cast<int>(O::PREVIOUS_STEER_RATE)];
+  const float steer_cmd = u[static_cast<int>(C::STEER_CMD)];
+  const float previous_steer_cmd =
+    timestep == 0 ? last_applied_steer_cmd_ : y[static_cast<int>(O::PREVIOUS_STEER_COMMAND)];
+  // MPPI's horizon timestep is fixed at 0.1 s by first_order_dubins_mppi_interface.cu.
+  constexpr float kMppiTimeStep = 0.1F;
+  const float cmd_slew = (steer_cmd - previous_steer_cmd) / kMppiTimeStep;
+  const float steer_accel = (steer_rate - previous_steer_rate) / kMppiTimeStep;
+
+  SteeringSmoothnessCostTerms terms;
+  terms.steer_rate_l2_cost = this->params_.steer_rate_l2_coeff * steer_rate * steer_rate;
+  terms.cmd_slew_cost = this->params_.cmd_slew_coeff * cmd_slew * cmd_slew;
+  terms.steer_accel_cost = this->params_.steer_accel_coeff * steer_accel * steer_accel;
+  return terms;
+}
+
+template <class CLASS_T, int NUM_TIMESTEPS, class PARAMS_T, class DYN_PARAMS_T>
 float FirstOrderDubinsBicycleCostImpl<CLASS_T, NUM_TIMESTEPS, PARAMS_T, DYN_PARAMS_T>::
   computeComfortCost(
     const Eigen::Ref<const control_array> & u, const Eigen::Ref<const output_array> & y,
     int timestep)
 {
-  (void)timestep;
   float lateral_accel = 0.0F;
   float lateral_jerk = 0.0F;
   float longitudinal_jerk = 0.0F;
   float steer_rate = 0.0F;
   comfortTerms(
     this->params_, u.data(), y.data(), lateral_accel, lateral_jerk, longitudinal_jerk, steer_rate);
-  return this->params_.lateral_acceleration_coeff * std::abs(lateral_accel) +
-         this->params_.lateral_jerk_coeff * std::abs(lateral_jerk) +
-         this->params_.longitudinal_jerk_coeff * std::abs(longitudinal_jerk) +
-         this->params_.steer_rate_coeff * std::abs(steer_rate);
+  const float legacy_cost = this->params_.lateral_acceleration_coeff * std::abs(lateral_accel) +
+                            this->params_.lateral_jerk_coeff * std::abs(lateral_jerk) +
+                            this->params_.longitudinal_jerk_coeff * std::abs(longitudinal_jerk) +
+                            this->params_.steer_rate_coeff * std::abs(steer_rate);
+  if (
+    this->params_.steer_rate_l2_coeff == 0.0F && this->params_.steer_accel_coeff == 0.0F &&
+    this->params_.cmd_slew_coeff == 0.0F) {
+    return legacy_cost;
+  }
+  return legacy_cost + computeSteeringSmoothnessCost(u.data(), y.data(), timestep).total();
 }
 
 template <class CLASS_T, int NUM_TIMESTEPS, class PARAMS_T, class DYN_PARAMS_T>
@@ -702,16 +744,21 @@ __device__ float
 FirstOrderDubinsBicycleCostImpl<CLASS_T, NUM_TIMESTEPS, PARAMS_T, DYN_PARAMS_T>::computeComfortCost(
   float * u, float * y, int timestep)
 {
-  (void)timestep;
   float lateral_accel = 0.0F;
   float lateral_jerk = 0.0F;
   float longitudinal_jerk = 0.0F;
   float steer_rate = 0.0F;
   comfortTerms(this->params_, u, y, lateral_accel, lateral_jerk, longitudinal_jerk, steer_rate);
-  return this->params_.lateral_acceleration_coeff * fabsf(lateral_accel) +
-         this->params_.lateral_jerk_coeff * fabsf(lateral_jerk) +
-         this->params_.longitudinal_jerk_coeff * fabsf(longitudinal_jerk) +
-         this->params_.steer_rate_coeff * fabsf(steer_rate);
+  const float legacy_cost = this->params_.lateral_acceleration_coeff * fabsf(lateral_accel) +
+                            this->params_.lateral_jerk_coeff * fabsf(lateral_jerk) +
+                            this->params_.longitudinal_jerk_coeff * fabsf(longitudinal_jerk) +
+                            this->params_.steer_rate_coeff * fabsf(steer_rate);
+  if (
+    this->params_.steer_rate_l2_coeff == 0.0F && this->params_.steer_accel_coeff == 0.0F &&
+    this->params_.cmd_slew_coeff == 0.0F) {
+    return legacy_cost;
+  }
+  return legacy_cost + computeSteeringSmoothnessCost(u, y, timestep).total();
 }
 
 template <class CLASS_T, int NUM_TIMESTEPS, class PARAMS_T, class DYN_PARAMS_T>

@@ -63,6 +63,13 @@ struct MppiIterationDiagnostics
   int min_ess_iteration_index{-1};
 };
 
+struct MppiSteeringStepCostBreakdown
+{
+  float steer_rate_l2_cost{0.0F};
+  float cmd_slew_cost{0.0F};
+  float steer_accel_cost{0.0F};
+};
+
 struct FirstOrderDubinsMppiRollout
 {
   std::vector<std::pair<float, float>> points;
@@ -113,6 +120,8 @@ struct FirstOrderDubinsMppiDebug
   float baseline_cost{0.0F};
   /** Importance-weight diagnostics for every optimization iteration in this solve. */
   MppiIterationDiagnostics iteration_diagnostics;
+  /** Steering smoothness components along the optimized control horizon. */
+  std::vector<MppiSteeringStepCostBreakdown> steering_step_costs;
   /** Hard-constraint validation of the generated post-step states. */
   FirstOrderDubinsMppiValidationResult validation;
   /** True when skip_if_invalid replaced the optimized trajectory with the input trajectory. */
@@ -163,6 +172,14 @@ public:
 
   /** Configure debug logging and ablation options. */
   void setRuntimeOptions(const FirstOrderDubinsMppiRuntimeOptions & options);
+
+  /**
+   * @brief Supply the downstream controller's last applied steering command for the next solve.
+   *
+   * This value is consumed once. If it is not supplied again before a later solve, that solve
+   * falls back to the measured steering state so a stale command cannot cross callback boundaries.
+   */
+  void setLastAppliedSteerCommand(float last_cmd);
 
   /**
    * @brief Optionally write reference/optimized trajectories for offline viz.

@@ -91,6 +91,23 @@ inline bool writeMppiDebugCostsCsv(
   return true;
 }
 
+inline bool writeMppiDebugSteeringCostsCsv(
+  const std::string & path, const std::vector<MppiSteeringStepCostBreakdown> & steering_step_costs)
+{
+  std::ofstream out(path);
+  if (!out) {
+    return false;
+  }
+  out << "timestep,steer_rate_l2_cost,cmd_slew_cost,steer_accel_cost\n";
+  out << std::setprecision(9) << std::fixed;
+  for (size_t i = 0; i < steering_step_costs.size(); ++i) {
+    const auto & costs = steering_step_costs[i];
+    out << i << "," << costs.steer_rate_l2_cost << "," << costs.cmd_slew_cost << ","
+        << costs.steer_accel_cost << "\n";
+  }
+  return true;
+}
+
 inline bool writeMppiDebugRolloutsCsv(
   const std::string & path, const std::vector<FirstOrderDubinsMppiRollout> & rollouts)
 {
@@ -230,6 +247,7 @@ inline bool loadMppiDebugEgoCsv(const std::string & path, MppiDebugEgoState & eg
   ego.v = vals[4];
   ego.accel = vals[5];
   ego.steer = vals[6];
+  ego.last_applied_steer_cmd = vals.size() >= 8U ? vals[7] : ego.steer;
   return true;
 }
 

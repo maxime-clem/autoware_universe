@@ -56,8 +56,9 @@ namespace
 constexpr int kMppiHorizon = detail::kMppiHorizon;
 constexpr int kRefHorizon = kMppiHorizon;
 constexpr float kDt = detail::kMppiDt;
-constexpr size_t kMaxIter = 10;
-constexpr int kNumRollouts = 4 * 1024;
+constexpr size_t kMaxIter = 3;
+constexpr int kNumRollouts = 8 * 1024;
+constexpr float kStdDevDecay = 0.80;
 constexpr int kMaxVizRollouts = 256;
 constexpr int kMaxWorstVizRollouts = 128;
 constexpr char kLoggerName[] = "first_order_dubins_mppi";
@@ -118,6 +119,9 @@ void applyUserCostParams(
   cost_params.accel_cmd_coeff = user.accel_cmd_coeff;
   cost_params.steer_cmd_coeff = user.steer_cmd_coeff;
   cost_params.steer_rate_coeff = user.steer_rate_coeff;
+  cost_params.steer_rate_l2_coeff = user.steer_rate_l2_coeff;
+  cost_params.steer_accel_coeff = user.steer_accel_coeff;
+  cost_params.cmd_slew_coeff = user.cmd_slew_coeff;
   cost_params.lateral_acceleration_coeff = user.lateral_acceleration_coeff;
   cost_params.lateral_jerk_coeff = user.lateral_jerk_coeff;
   cost_params.longitudinal_jerk_coeff = user.longitudinal_jerk_coeff;
@@ -193,6 +197,28 @@ void replayRolloutPoints(
     model.step(x, x_next, xdot, u, y, static_cast<float>(t), dt);
     points.emplace_back(x_next(pos_x_idx), x_next(pos_y_idx));
     x = x_next;
+  }
+}
+
+void buildSteeringStepCostBreakdown(
+  DYN & model, COST & cost, const DYN::state_array & initial_state,
+  const Mppi::control_trajectory & controls, std::vector<MppiSteeringStepCostBreakdown> & breakdown)
+{
+  DYN::state_array state = initial_state;
+  DYN::state_array next_state = model.getZeroState();
+  DYN::state_array state_der = model.getZeroState();
+  DYN::output_array output = DYN::output_array::Zero();
+  breakdown.clear();
+  breakdown.reserve(static_cast<size_t>(kMppiHorizon));
+  for (int timestep = 0; timestep < kMppiHorizon; ++timestep) {
+    DYN::control_array control = controls.col(timestep);
+    model.enforceConstraints(state, control);
+    model.step(state, next_state, state_der, control, output, static_cast<float>(timestep), kDt);
+    const auto terms = cost.computeSteeringSmoothnessCost(control.data(), output.data(), timestep);
+    breakdown.push_back(
+      MppiSteeringStepCostBreakdown{
+        terms.steer_rate_l2_cost, terms.cmd_slew_cost, terms.steer_accel_cost});
+    state = next_state;
   }
 }
 
@@ -432,6 +458,9 @@ struct FirstOrderDubinsMppiInterface::Impl
   /** Snapshot of u_nom after seeding, written to NNNNNN_nominal.csv. */
   std::vector<float> logged_nominal_accel;
   std::vector<float> logged_nominal_steer;
+  /** One-shot downstream command boundary; absent means use measured steering. */
+  std::optional<float> pending_last_applied_steer_cmd;
+  float resolved_last_applied_steer_cmd{0.0F};
 
   Impl() : feedback(&model, kDt), sampler(SAMPLER::SAMPLING_PARAMS_T{}) {}
 
@@ -488,6 +517,7 @@ struct FirstOrderDubinsMppiInterface::Impl
     sp.std_dev[static_cast<int>(FirstOrderDubinsBicycleParams::ControlIndex::STEER_CMD)] =
       steer_std;
     sp.sum_strides = std::max(32, (kNumRollouts + 1023) / 1024);
+    sp.std_dev_decay = kStdDevDecay;
 #ifdef USE_COLOURED_NOISE
     // Power-law PSD exponents (0 = white, 1 = pink, 2 = brown). Pink steer keeps lateral
     // reach while cutting high-frequency δ_cmd chatter from i.i.d. Gaussian samples.
@@ -668,6 +698,28 @@ struct FirstOrderDubinsMppiInterface::Impl
       initial_state.acceleration;
     x(static_cast<int>(FirstOrderDubinsBicycleParams::StateIndex::STEER_ANGLE)) =
       initial_state.steering;
+    prepareSteeringSmoothnessBoundary(initial_state.steering);
+  }
+
+  void prepareSteeringSmoothnessBoundary(const float measured_steering)
+  {
+    float boundary_command = measured_steering;
+    if (
+      pending_last_applied_steer_cmd.has_value() &&
+      std::isfinite(*pending_last_applied_steer_cmd)) {
+      boundary_command =
+        std::clamp(*pending_last_applied_steer_cmd, -dyn.max_steer_angle, dyn.max_steer_angle);
+    }
+    pending_last_applied_steer_cmd.reset();
+    resolved_last_applied_steer_cmd = boundary_command;
+
+    const float steer_tau = std::max(dyn.steer_time_constant, 1.0E-4F);
+    const float boundary_rate =
+      clampSteerRate(dyn, (boundary_command - measured_steering) / steer_tau);
+    x(static_cast<int>(FirstOrderDubinsBicycleParams::StateIndex::LAST_STEER_COMMAND)) =
+      boundary_command;
+    x(static_cast<int>(FirstOrderDubinsBicycleParams::StateIndex::LAST_STEER_RATE)) = boundary_rate;
+    cost.setLastAppliedSteerCommand(boundary_command);
   }
 
   void uploadBoundarySegments()
@@ -768,7 +820,7 @@ struct FirstOrderDubinsMppiInterface::Impl
     control.steer_cmd =
       u_apply(static_cast<int>(FirstOrderDubinsBicycleParams::ControlIndex::STEER_CMD));
 
-    RCLCPP_INFO(
+    RCLCPP_DEBUG(
       mppiLogger(),
       "\tMPPI track step %d: start_idx=%zu ref_v0=%.2f u_accel=%.3f u_steer=%.3f "
       "ego_v=%.2f baseline_cost=%.2f min_ess=%.1f/%d min_ess_iteration=%d "
@@ -854,6 +906,19 @@ void FirstOrderDubinsMppiInterface::setRuntimeOptions(
     options.ignore_obstacles, options.ignore_drivable_area, options.force_cold_start_each_step,
     options.skip_if_invalid, options.use_last_control_as_nominal);
 }
+
+void FirstOrderDubinsMppiInterface::setLastAppliedSteerCommand(const float last_cmd)
+{
+  if (!impl_) {
+    throw std::runtime_error("FirstOrderDubinsMppiInterface implementation is missing");
+  }
+  if (std::isfinite(last_cmd)) {
+    impl_->pending_last_applied_steer_cmd = last_cmd;
+  } else {
+    impl_->pending_last_applied_steer_cmd.reset();
+  }
+}
+
 void FirstOrderDubinsMppiInterface::setDebugTrajectoryLogging(
   const bool enable, const std::string & directory)
 {
@@ -969,8 +1034,12 @@ FirstOrderDubinsMppiControl FirstOrderDubinsMppiInterface::computeStep(
   }
 
   fromHostState(impl_->x, state);
+  const float measured_steering =
+    impl_->x(static_cast<int>(FirstOrderDubinsBicycleParams::StateIndex::STEER_ANGLE));
+  impl_->prepareSteeringSmoothnessBoundary(measured_steering);
   impl_->sim_time = sim_time;
   const FirstOrderDubinsMppiControl control = impl_->runStep();
+  impl_->pending_last_applied_steer_cmd = control.steer_cmd;
   state = toHostState(impl_->x);
   // Advance the vendor control history after the applied command is consumed so the
   // next cycle's Savitzky-Golay left-edge taps are the previously applied controls.
@@ -992,6 +1061,7 @@ FirstOrderDubinsMppiOptimizationResult FirstOrderDubinsMppiInterface::optimizeTr
   const auto not_enough_input_points = input.points.size() < 2U;
   const auto optimization_required = detail::isOptimizationRequired(input);
   if (not_enough_input_points || !optimization_required) {
+    impl_->pending_last_applied_steer_cmd.reset();
     RCLCPP_WARN(
       mppiLogger(), "MPPI skipped: %s",
       not_enough_input_points ? "trajectory has fewer than 2 points"
@@ -1095,6 +1165,8 @@ FirstOrderDubinsMppiOptimizationResult FirstOrderDubinsMppiInterface::optimizeTr
   result.debug.optimized_trajectory = output;
   result.debug.validation = validation;
   result.debug.iteration_diagnostics = impl_->iteration_diagnostics;
+  buildSteeringStepCostBreakdown(
+    impl_->model, impl_->cost, x_at_optimization, u_opt_traj, result.debug.steering_step_costs);
   if (impl_->enable_rollout_visualization) {
     buildRolloutVisualization(
       *impl_->controller, impl_->sampler, impl_->model, x_at_optimization,
@@ -1113,11 +1185,12 @@ FirstOrderDubinsMppiOptimizationResult FirstOrderDubinsMppiInterface::optimizeTr
   ego.v = odometry.twist.twist.linear.x;
   ego.accel = longitudinalAccelerationMps2(acceleration);
   ego.steer = steeringTireAngleRad(steering_status);
+  ego.last_applied_steer_cmd = impl_->resolved_last_applied_steer_cmd;
   impl_->debug_trajectory_logger.writeParamsOnce(impl_->user_cost_params_, impl_->vehicle_params);
   impl_->debug_trajectory_logger.logFrame(
     result.debug.reference_trajectory, result.debug.optimized_trajectory, ego,
     result.debug.baseline_cost, impl_->logged_nominal_accel, impl_->logged_nominal_steer,
-    result.debug.iteration_diagnostics);
+    result.debug.iteration_diagnostics, result.debug.steering_step_costs);
 
   RCLCPP_INFO(
     mppiLogger(),

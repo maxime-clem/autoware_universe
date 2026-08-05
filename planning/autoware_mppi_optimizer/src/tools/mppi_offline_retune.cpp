@@ -147,6 +147,12 @@ void applyCostParam(
     params.steer_cmd_coeff = value;
   } else if (key == "steer_rate_coeff") {
     params.steer_rate_coeff = value;
+  } else if (key == "steer_rate_l2_coeff") {
+    params.steer_rate_l2_coeff = value;
+  } else if (key == "steer_accel_coeff") {
+    params.steer_accel_coeff = value;
+  } else if (key == "cmd_slew_coeff") {
+    params.cmd_slew_coeff = value;
   } else if (key == "lateral_acceleration_coeff") {
     params.lateral_acceleration_coeff = value;
   } else if (key == "lateral_jerk_coeff") {
@@ -525,6 +531,7 @@ int run(int argc, char ** argv)
       odom = odometryFromReference(reference);
       accel = accelFromReference(reference);
       steering = steeringFromReference(reference);
+      ego.last_applied_steer_cmd = steering.steering_tire_angle;
     }
     const autoware_perception_msgs::msg::TrackedObjects empty_objects;
 
@@ -534,6 +541,7 @@ int run(int argc, char ** argv)
     frame_mppi.setVehicleParams(vehicle_params);
     frame_mppi.setDebugTrajectoryLogging(false);
     frame_mppi.setRolloutVisualizationEnabled(true);
+    frame_mppi.setLastAppliedSteerCommand(static_cast<float>(ego.last_applied_steer_cmd));
 
     const std::string nominal_path =
       !nominal_csv_override.empty() ? nominal_csv_override : (log_dir + "/" + tag + "_nominal.csv");
@@ -596,6 +604,12 @@ int run(int argc, char ** argv)
     const std::string rollouts_path = out_dir + "/" + tag + "_rollouts.csv";
     if (!writeMppiDebugRolloutsCsv(rollouts_path, result.debug.rollouts)) {
       std::cerr << "Failed to write " << rollouts_path << "\n";
+      return 1;
+    }
+
+    const std::string steering_costs_path = out_dir + "/" + tag + "_steering_costs.csv";
+    if (!writeMppiDebugSteeringCostsCsv(steering_costs_path, result.debug.steering_step_costs)) {
+      std::cerr << "Failed to write " << steering_costs_path << "\n";
       return 1;
     }
 

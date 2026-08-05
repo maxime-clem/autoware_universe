@@ -34,6 +34,12 @@ struct FirstOrderDubinsBicycleCostParams : public CostParams<2>
   float steer_cmd_coeff = 0.0F;
   /** Direct cost on steer rate [rad/s]: (steer_cmd - steer) / steer_time_constant. */
   float steer_rate_coeff = 0.0F;
+  /** Quadratic cost on the clamped steering rate actually executed by the dynamics. */
+  float steer_rate_l2_coeff = 0.0F;
+  /** Quadratic cost on the finite difference of consecutive executed steering rates. */
+  float steer_accel_coeff = 0.0F;
+  /** Quadratic cost on the finite difference of consecutive steering commands. */
+  float cmd_slew_coeff = 0.0F;
   float lateral_acceleration_coeff = 300.0F;
   float lateral_jerk_coeff = 300.0F;
   float longitudinal_jerk_coeff = 10.0F;
@@ -52,6 +58,18 @@ struct FirstOrderDubinsBicycleCostParams : public CostParams<2>
   float road_border_collision_margin = 0.2F;
   /** Per-timestep soft cost when the ego footprint crosses a drivable-area boundary. */
   float drivable_area_crossing_coeff = 10000.0F;
+};
+
+struct SteeringSmoothnessCostTerms
+{
+  float steer_rate_l2_cost{0.0F};
+  float cmd_slew_cost{0.0F};
+  float steer_accel_cost{0.0F};
+
+  __host__ __device__ float total() const
+  {
+    return steer_rate_l2_cost + cmd_slew_cost + steer_accel_cost;
+  }
 };
 
 template <
@@ -73,6 +91,9 @@ public:
   FirstOrderDubinsBicycleCostImpl(cudaStream_t stream = 0);
 
   void paramsToDevice();
+
+  /** Set the one-step left boundary command u_delta[-1] used by steering smoothness costs. */
+  void setLastAppliedSteerCommand(float last_cmd);
 
   void setReferenceTrajectory(
     const float * x, const float * y, const float * v, int count, const float * yaw = nullptr);
@@ -159,6 +180,9 @@ public:
 
   __device__ float computeComfortCost(float * u, float * y, int timestep);
 
+  __host__ __device__ SteeringSmoothnessCostTerms
+  computeSteeringSmoothnessCost(const float * u, const float * y, int timestep) const;
+
   __device__ float terminalCost(float * y, float * theta_c);
 
   float computeRunningCost(
@@ -188,6 +212,7 @@ public:
   float drivable_area_y0_[kMaxDrivableAreaSegments] = {};
   float drivable_area_x1_[kMaxDrivableAreaSegments] = {};
   float drivable_area_y1_[kMaxDrivableAreaSegments] = {};
+  float last_applied_steer_cmd_ = 0.0F;
 
 private:
   void dataToDevice();

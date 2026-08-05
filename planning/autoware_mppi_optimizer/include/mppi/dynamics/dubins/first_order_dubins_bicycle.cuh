@@ -29,6 +29,9 @@ struct FirstOrderDubinsBicycleParams : public DynamicsParams
     POS_Y,
     STEER_ANGLE,
     ACCELERATION,
+    // Auxiliary rollout history used by steering smoothness costs; not physical vehicle states.
+    LAST_STEER_COMMAND,
+    LAST_STEER_RATE,
     NUM_STATES
   };
 
@@ -45,6 +48,10 @@ struct FirstOrderDubinsBicycleParams : public DynamicsParams
     TOTAL_VELOCITY,
     LATERAL_JERK,
     LONGITUDINAL_JERK,
+    // Current and left-neighbor values emitted for both combined and split cost kernels.
+    STEER_RATE,
+    PREVIOUS_STEER_COMMAND,
+    PREVIOUS_STEER_RATE,
     NUM_OUTPUTS
   };
 
@@ -99,6 +106,15 @@ public:
     Eigen::Ref<state_array> state_der, const float dt);
 
   __device__ void updateState(float * state, float * next_state, float * state_der, const float dt);
+
+  void step(
+    Eigen::Ref<state_array> state, Eigen::Ref<state_array> next_state,
+    Eigen::Ref<state_array> state_der, const Eigen::Ref<const control_array> & control,
+    Eigen::Ref<output_array> output, const float t, const float dt);
+
+  __device__ void step(
+    float * state, float * next_state, float * state_der, float * control, float * output,
+    float * theta_s, const float t, const float dt);
 
   state_array interpolateState(
     const Eigen::Ref<state_array> state_1, const Eigen::Ref<state_array> state_2,

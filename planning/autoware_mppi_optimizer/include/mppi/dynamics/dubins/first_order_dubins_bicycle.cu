@@ -33,6 +33,8 @@ __host__ __device__ void firstOrderDubinsBicycleDeriv(
 
   const float steer_dot = clampSteerRate(p, (steer_cmd - steer) / steer_tau);
   state_der[static_cast<int>(S::STEER_ANGLE)] = steer_dot;
+  state_der[static_cast<int>(S::LAST_STEER_COMMAND)] = 0.0F;
+  state_der[static_cast<int>(S::LAST_STEER_RATE)] = 0.0F;
 }
 }  // namespace
 
@@ -83,6 +85,26 @@ void FirstOrderDubinsBicycleImpl<CLASS_T, PARAMS_T>::updateState(
 }
 
 template <class CLASS_T, class PARAMS_T>
+void FirstOrderDubinsBicycleImpl<CLASS_T, PARAMS_T>::step(
+  Eigen::Ref<state_array> state, Eigen::Ref<state_array> next_state,
+  Eigen::Ref<state_array> state_der, const Eigen::Ref<const control_array> & control,
+  Eigen::Ref<output_array> output, const float t, const float dt)
+{
+  (void)t;
+  computeDynamics(state, control, state_der);
+  updateState(state, next_state, state_der, dt);
+  next_state(static_cast<int>(S::LAST_STEER_COMMAND)) = control(static_cast<int>(C::STEER_CMD));
+  next_state(static_cast<int>(S::LAST_STEER_RATE)) = state_der(static_cast<int>(S::STEER_ANGLE));
+  stateToOutput(next_state, output);
+  output(static_cast<int>(FirstOrderDubinsBicycleParams::OutputIndex::STEER_RATE)) =
+    state_der(static_cast<int>(S::STEER_ANGLE));
+  output(static_cast<int>(FirstOrderDubinsBicycleParams::OutputIndex::PREVIOUS_STEER_COMMAND)) =
+    state(static_cast<int>(S::LAST_STEER_COMMAND));
+  output(static_cast<int>(FirstOrderDubinsBicycleParams::OutputIndex::PREVIOUS_STEER_RATE)) =
+    state(static_cast<int>(S::LAST_STEER_RATE));
+}
+
+template <class CLASS_T, class PARAMS_T>
 FirstOrderDubinsBicycleImpl<CLASS_T, PARAMS_T>::state_array
 FirstOrderDubinsBicycleImpl<CLASS_T, PARAMS_T>::interpolateState(
   const Eigen::Ref<state_array> state_1, const Eigen::Ref<state_array> state_2, const float alpha)
@@ -109,6 +131,32 @@ __device__ void FirstOrderDubinsBicycleImpl<CLASS_T, PARAMS_T>::updateState(
     if (i == static_cast<int>(S::ACCELERATION)) {
       next_state[i] = fmaxf(fminf(next_state[i], this->params_.max_accel), this->params_.min_accel);
     }
+  }
+}
+
+template <class CLASS_T, class PARAMS_T>
+__device__ void FirstOrderDubinsBicycleImpl<CLASS_T, PARAMS_T>::step(
+  float * state, float * next_state, float * state_der, float * control, float * output,
+  float * theta_s, const float t, const float dt)
+{
+  (void)t;
+  computeDynamics(state, control, state_der, theta_s);
+  __syncthreads();
+  updateState(state, next_state, state_der, dt);
+  __syncthreads();
+  if (threadIdx.y == 0) {
+    next_state[static_cast<int>(S::LAST_STEER_COMMAND)] = control[static_cast<int>(C::STEER_CMD)];
+    next_state[static_cast<int>(S::LAST_STEER_RATE)] = state_der[static_cast<int>(S::STEER_ANGLE)];
+  }
+  __syncthreads();
+  stateToOutput(next_state, output);
+  __syncthreads();
+  if (threadIdx.y == 0) {
+    using O = FirstOrderDubinsBicycleParams::OutputIndex;
+    output[static_cast<int>(O::STEER_RATE)] = state_der[static_cast<int>(S::STEER_ANGLE)];
+    output[static_cast<int>(O::PREVIOUS_STEER_COMMAND)] =
+      state[static_cast<int>(S::LAST_STEER_COMMAND)];
+    output[static_cast<int>(O::PREVIOUS_STEER_RATE)] = state[static_cast<int>(S::LAST_STEER_RATE)];
   }
 }
 
@@ -143,6 +191,10 @@ __host__ __device__ void FirstOrderDubinsBicycleImpl<CLASS_T, PARAMS_T>::stateTo
   output[static_cast<int>(O::TOTAL_VELOCITY)] = fabsf(v);
   output[static_cast<int>(O::LONGITUDINAL_JERK)] = 0.0F;
   output[static_cast<int>(O::LATERAL_JERK)] = 0.0F;
+  output[static_cast<int>(O::STEER_RATE)] = 0.0F;
+  output[static_cast<int>(O::PREVIOUS_STEER_COMMAND)] =
+    state[static_cast<int>(S::LAST_STEER_COMMAND)];
+  output[static_cast<int>(O::PREVIOUS_STEER_RATE)] = state[static_cast<int>(S::LAST_STEER_RATE)];
 }
 
 template <class CLASS_T, class PARAMS_T>

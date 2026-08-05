@@ -118,6 +118,9 @@ DEFAULT_PARAMS: Dict[str, float] = {
     "accel_cmd_coeff": 0.0,
     "steer_cmd_coeff": 10.0,
     "steer_rate_coeff": 0.0,  # cost param; not always present in yaml
+    "steer_rate_l2_coeff": 0.0,
+    "steer_accel_coeff": 0.0,
+    "cmd_slew_coeff": 0.0,
     "obstacle_collision_margin": 0.2,
 }
 
@@ -136,6 +139,9 @@ SLIDER_SPECS: List[Tuple[str, float, float]] = [
     ("accel_cmd_coeff", 0.0, 2000.0),
     ("steer_cmd_coeff", 0.0, 5000.0),
     ("steer_rate_coeff", 0.0, 10000.0),
+    ("steer_rate_l2_coeff", 0.0, 10000.0),
+    ("steer_accel_coeff", 0.0, 10000.0),
+    ("cmd_slew_coeff", 0.0, 10000.0),
     ("boundary_threshold", 0.1, 5.0),
     ("obstacle_collision_margin", 0.0, 2.0),
     ("crash_coeff", 0.0, 500000.0),
