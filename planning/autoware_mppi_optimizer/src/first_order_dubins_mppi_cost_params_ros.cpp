@@ -32,7 +32,6 @@ void declare_first_order_dubins_mppi_cost_params(rclcpp::Node & node, const std:
 {
   const FirstOrderDubinsMppiCostParams defaults;
   node.declare_parameter(param_name(prefix, "lambda"), defaults.lambda);
-  node.declare_parameter(param_name(prefix, "desired_speed"), defaults.desired_speed);
   node.declare_parameter(param_name(prefix, "speed_coeff"), defaults.speed_coeff);
   node.declare_parameter(param_name(prefix, "track_coeff"), defaults.track_coeff);
   node.declare_parameter(param_name(prefix, "track_terminal_scale"), defaults.track_terminal_scale);
@@ -68,8 +67,6 @@ FirstOrderDubinsMppiCostParams get_first_order_dubins_mppi_cost_params(
 {
   FirstOrderDubinsMppiCostParams params;
   params.lambda = static_cast<float>(node.get_parameter(param_name(prefix, "lambda")).as_double());
-  params.desired_speed =
-    static_cast<float>(node.get_parameter(param_name(prefix, "desired_speed")).as_double());
   params.speed_coeff =
     static_cast<float>(node.get_parameter(param_name(prefix, "speed_coeff")).as_double());
   params.track_coeff =

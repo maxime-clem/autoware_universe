@@ -104,7 +104,6 @@ MPPI_MAX_WORST_VIZ_ROLLOUTS = 128
 # (Excludes bool/string runtime flags: enable_debug_trajectory_log, ignore_*, etc.)
 DEFAULT_PARAMS: Dict[str, float] = {
     "lambda": 14000.0,
-    "desired_speed": 2.5,
     "speed_coeff": 500.0,
     "track_coeff": 3000.0,
     "track_terminal_scale": 10.0,
@@ -125,7 +124,6 @@ DEFAULT_PARAMS: Dict[str, float] = {
 # (name, vmin, vmax) — keep in sync with DEFAULT_PARAMS keys.
 SLIDER_SPECS: List[Tuple[str, float, float]] = [
     ("lambda", 100.0, 20000.0),
-    ("desired_speed", 0.0, 20.0),
     ("track_coeff", 0.0, 10000.0),
     ("track_terminal_scale", 0.0, 50.0),
     ("speed_coeff", 0.0, 5000.0),

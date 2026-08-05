@@ -86,7 +86,6 @@ void applyUserCostParams(
   FirstOrderDubinsBicycleCostParams<kRefHorizon> & cost_params,
   const FirstOrderDubinsMppiCostParams & user)
 {
-  cost_params.desired_speed = user.desired_speed;
   cost_params.speed_coeff = user.speed_coeff;
   cost_params.track_coeff = user.track_coeff;
   cost_params.track_terminal_scale = user.track_terminal_scale;
@@ -502,15 +501,15 @@ struct FirstOrderDubinsMppiInterface::Impl
       "MPPI GPU initialized (horizon=%d, rollouts=%d, dt=%.2f, lambda=%.1f, "
       "wheel_base=%.2f, max_steer=%.2f, steer_std=%.3f, acc_tau=%.2f, steer_tau=%.2f, "
       "steer_rate_lim=%.2f, vel_rate_lim=%.2f, ego=%.2fx%.2f, axle_to_center=%.2f, "
-      "desired_speed=%.2f, boundary_threshold=%.2f, obs_margin=%.2f, road_border_margin=%.2f, "
+      "boundary_threshold=%.2f, obs_margin=%.2f, road_border_margin=%.2f, "
       "drivable_area_coeff=%.2f)",
       kMppiHorizon, kNumRollouts, kDt, user_cost_params_.lambda, vehicle_params.wheel_base,
       vehicle_params.max_steer_angle, steer_std, vehicle_params.acc_time_constant,
       vehicle_params.steer_time_constant, vehicle_params.steer_rate_lim,
       vehicle_params.vel_rate_lim, vehicle_params.ego_length, vehicle_params.ego_width,
-      vehicle_params.ego_axle_to_box_center, cost_params.desired_speed,
-      cost_params.boundary_threshold, cost_params.obstacle_collision_margin,
-      cost_params.road_border_collision_margin, cost_params.drivable_area_crossing_coeff);
+      vehicle_params.ego_axle_to_box_center, cost_params.boundary_threshold,
+      cost_params.obstacle_collision_margin, cost_params.road_border_collision_margin,
+      cost_params.drivable_area_crossing_coeff);
   }
 
   void resetTrackingState()
@@ -615,7 +614,7 @@ struct FirstOrderDubinsMppiInterface::Impl
     diffusion_reference = reference;
     tracked_objects = ignore_obstacles ? TrackedObjects{} : tracked_objects_in;
     road_borders = road_borders_in;
-    drivable_area = drivable_area_in;
+    drivable_area = ignore_drivable_area ? std::vector<Segment>() : drivable_area_in;
     if (road_borders.size() > static_cast<size_t>(COST::kMaxRoadBorderSegments)) {
       RCLCPP_WARN(
         mppiLogger(), "Road-border segment count %zu exceeds GPU capacity %d; truncating",
@@ -627,9 +626,6 @@ struct FirstOrderDubinsMppiInterface::Impl
         drivable_area.size(), COST::kMaxDrivableAreaSegments);
     }
     obstacles.clear();
-    // Boundary crash is disabled on this stack (isEgoOutsideDrivableArea always false).
-    // ignore_drivable_area remains an ablation API flag; it does not reintroduce road borders.
-    (void)ignore_drivable_area;
 
     // Diffusion reference is already time-aligned (point[t] ≈ after step t). Seed from index 0.
     tracking_start_idx = 0U;
