@@ -706,7 +706,8 @@ FirstOrderDubinsBicycleCostImpl<CLASS_T, NUM_TIMESTEPS, PARAMS_T, DYN_PARAMS_T>:
   // MPPI's horizon timestep is fixed at 0.1 s by first_order_dubins_mppi_interface.cu.
   constexpr float kMppiTimeStep = 0.1F;
   const float cmd_slew = (steer_cmd - previous_steer_cmd) / kMppiTimeStep;
-  const float steer_accel = (steer_rate - previous_steer_rate) / kMppiTimeStep;
+  const float steer_accel =
+    timestep == 0 ? 0.0F : (steer_rate - previous_steer_rate) / kMppiTimeStep;
 
   SteeringSmoothnessCostTerms terms;
   terms.steer_rate_l2_cost = this->params_.steer_rate_l2_coeff * steer_rate * steer_rate;

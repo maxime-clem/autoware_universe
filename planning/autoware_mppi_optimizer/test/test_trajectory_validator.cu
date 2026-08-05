@@ -94,6 +94,26 @@ TEST(FirstOrderDubinsBicycleSteeringCost, MatchingBoundaryHasZeroStepZeroSmoothn
   EXPECT_FLOAT_EQ(terms.steer_accel_cost, 0.0F);
 }
 
+TEST(FirstOrderDubinsBicycleSteeringCost, StepZeroMasksSteerAccelerationButKeepsCommandSlew)
+{
+  TestCost cost;
+  TestCostParams params;
+  params.steer_accel_coeff = 3.0F;
+  params.cmd_slew_coeff = 2.0F;
+  cost.setParams(params);
+  cost.setLastAppliedSteerCommand(0.1F);
+
+  TestCost::control_array control = TestCost::control_array::Zero();
+  TestCost::output_array output = TestCost::output_array::Zero();
+  control(static_cast<int>(CostControlIndex::STEER_CMD)) = 0.3F;
+  output(static_cast<int>(CostOutputIndex::STEER_RATE)) = 1.5F;
+  output(static_cast<int>(CostOutputIndex::PREVIOUS_STEER_RATE)) = -2.0F;
+
+  const auto terms = cost.computeSteeringSmoothnessCost(control.data(), output.data(), 0);
+  EXPECT_FLOAT_EQ(terms.steer_accel_cost, 0.0F);
+  EXPECT_NEAR(terms.cmd_slew_cost, 8.0F, 1.0E-5F);
+}
+
 TEST(FirstOrderDubinsBicycleSteeringCost, AlternatingCommandsCostMoreThanConstantCommands)
 {
   TestCost cost;
