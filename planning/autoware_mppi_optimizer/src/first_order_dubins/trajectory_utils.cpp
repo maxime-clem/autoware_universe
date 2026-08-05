@@ -279,7 +279,7 @@ Trajectory buildOptimizedTrajectory(
     output_point.pose.orientation = quaternionFromYaw(state.yaw);
     output_point.longitudinal_velocity_mps = state.velocity;
     output_point.acceleration_mps2 = controls[i].accel_cmd;
-    output_point.front_wheel_angle_rad = controls[i].steer_cmd;
+    output_point.front_wheel_angle_rad = state.steering;
   }
   return output;
 }
