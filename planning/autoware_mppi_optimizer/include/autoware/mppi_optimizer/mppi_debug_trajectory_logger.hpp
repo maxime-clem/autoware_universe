@@ -155,6 +155,8 @@ public:
         out << "steer_rate_l2_coeff," << cost.steer_rate_l2_coeff << "\n";
         out << "steer_accel_coeff," << cost.steer_accel_coeff << "\n";
         out << "cmd_slew_coeff," << cost.cmd_slew_coeff << "\n";
+        out << "nominal_curvature_min_chord_length_m," << cost.nominal_curvature_min_chord_length_m
+            << "\n";
         out << "lateral_acceleration_coeff," << cost.lateral_acceleration_coeff << "\n";
         out << "lateral_jerk_coeff," << cost.lateral_jerk_coeff << "\n";
         out << "longitudinal_jerk_coeff," << cost.longitudinal_jerk_coeff << "\n";

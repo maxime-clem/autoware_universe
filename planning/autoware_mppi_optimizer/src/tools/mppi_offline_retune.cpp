@@ -89,6 +89,8 @@ void printUsage(const char * argv0)
        "  --steer-tau S          Steer time constant [s] (default 0.27)\n"
        "  --copy-reference       Also copy reference CSVs into out-dir\n"
        "  --nominal-csv FILE     Force u_nom from this CSV (overrides log *_nominal.csv)\n"
+       "  --reseed-nominal-from-reference\n"
+       "                         Ignore logged *_nominal.csv and derive u_nom from reference\n"
        "\n"
        "Loads cost_params.csv / vehicle_params.csv / *_ego.csv / *_nominal.csv from --log-dir\n"
        "when present. CLI --set and vehicle flags override those. Without *_ego.csv, ego IC\n"
@@ -153,6 +155,8 @@ void applyCostParam(
     params.steer_accel_coeff = value;
   } else if (key == "cmd_slew_coeff") {
     params.cmd_slew_coeff = value;
+  } else if (key == "nominal_curvature_min_chord_length_m") {
+    params.nominal_curvature_min_chord_length_m = value;
   } else if (key == "lateral_acceleration_coeff") {
     params.lateral_acceleration_coeff = value;
   } else if (key == "lateral_jerk_coeff") {
@@ -372,6 +376,7 @@ int run(int argc, char ** argv)
   std::string nominal_csv_override;
   std::optional<uint64_t> frame_filter;
   bool copy_reference = false;
+  bool reseed_nominal_from_reference = false;
   FirstOrderDubinsMppiCostParams cost_params;
   FirstOrderDubinsMppiVehicleParams vehicle_params;
   // Defaults closer to j6_gen2 for Autoware replay.
@@ -426,6 +431,8 @@ int run(int argc, char ** argv)
       copy_reference = true;
     } else if (arg == "--nominal-csv") {
       nominal_csv_override = need("--nominal-csv");
+    } else if (arg == "--reseed-nominal-from-reference") {
+      reseed_nominal_from_reference = true;
     } else {
       std::cerr << "Unknown argument: " << arg << "\n";
       printUsage(argv[0]);
@@ -547,12 +554,13 @@ int run(int argc, char ** argv)
       !nominal_csv_override.empty() ? nominal_csv_override : (log_dir + "/" + tag + "_nominal.csv");
     std::vector<float> nominal_accel;
     std::vector<float> nominal_steer;
-    if (loadMppiDebugNominalCsv(nominal_path, nominal_accel, nominal_steer)) {
+    const bool force_nominal = !nominal_csv_override.empty() || !reseed_nominal_from_reference;
+    if (force_nominal && loadMppiDebugNominalCsv(nominal_path, nominal_accel, nominal_steer)) {
       frame_mppi.setForcedNominalControl(nominal_accel, nominal_steer);
       if (!nominal_csv_override.empty()) {
         std::cout << "frame " << frame_id << " seeding u_nom from " << nominal_path << "\n";
       }
-    } else {
+    } else if (force_nominal) {
       static bool warned_missing_nominal = false;
       if (!warned_missing_nominal) {
         std::cerr
@@ -562,6 +570,10 @@ int run(int argc, char ** argv)
              "replay, or pass --nominal-csv from a prior retune *_seed_nominal.csv.\n";
         warned_missing_nominal = true;
       }
+    } else {
+      std::cout << "frame " << frame_id
+                << " reseeding u_nom from reference with nominal curvature chord "
+                << cost_params.nominal_curvature_min_chord_length_m << " m\n";
     }
 
     const auto result =

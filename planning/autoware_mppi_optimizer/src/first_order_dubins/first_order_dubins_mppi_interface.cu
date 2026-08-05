@@ -596,8 +596,9 @@ struct FirstOrderDubinsMppiInterface::Impl
     const int accel_idx =
       static_cast<int>(FirstOrderDubinsBicycleParams::ControlIndex::ACCELERATION_CMD);
     const int steer_idx = static_cast<int>(FirstOrderDubinsBicycleParams::ControlIndex::STEER_CMD);
-    const auto nominal =
-      detail::buildDiffusionNominalControl(reference, start_idx, vehicle_params, kMppiHorizon);
+    const auto nominal = detail::buildDiffusionNominalControl(
+      reference, start_idx, vehicle_params, kMppiHorizon,
+      user_cost_params_.nominal_curvature_min_chord_length_m);
     for (int t = 0; t < kMppiHorizon; ++t) {
       u_nom(accel_idx, t) = nominal[static_cast<size_t>(t)].accel_cmd;
       u_nom(steer_idx, t) = nominal[static_cast<size_t>(t)].steer_cmd;

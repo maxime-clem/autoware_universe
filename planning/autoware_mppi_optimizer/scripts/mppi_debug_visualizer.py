@@ -121,6 +121,7 @@ DEFAULT_PARAMS: Dict[str, float] = {
     "steer_rate_l2_coeff": 0.0,
     "steer_accel_coeff": 0.0,
     "cmd_slew_coeff": 0.0,
+    "nominal_curvature_min_chord_length_m": 1.5,
     "obstacle_collision_margin": 0.2,
 }
 
@@ -142,6 +143,7 @@ SLIDER_SPECS: List[Tuple[str, float, float]] = [
     ("steer_rate_l2_coeff", 0.0, 10000.0),
     ("steer_accel_coeff", 0.0, 10000.0),
     ("cmd_slew_coeff", 0.0, 10000.0),
+    ("nominal_curvature_min_chord_length_m", 0.0, 5.0),
     ("boundary_threshold", 0.1, 5.0),
     ("obstacle_collision_margin", 0.0, 2.0),
     ("crash_coeff", 0.0, 500000.0),
@@ -2153,6 +2155,13 @@ class OfflineLogVisualizer:
             cmd.extend(["--params-yaml", str(self._params_yaml)])
         if reseed:
             cmd.extend(["--nominal-csv", str(seed_path)])
+        elif not math.isclose(
+            params["nominal_curvature_min_chord_length_m"],
+            self._params["nominal_curvature_min_chord_length_m"],
+            rel_tol=0.0,
+            abs_tol=1.0e-6,
+        ):
+            cmd.append("--reseed-nominal-from-reference")
         for key, value in params.items():
             cmd.extend(["--set", f"{key}={value}"])
 

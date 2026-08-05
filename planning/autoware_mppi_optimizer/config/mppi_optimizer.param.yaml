@@ -17,11 +17,13 @@
     lateral_jerk_coeff: 200.0
     longitudinal_jerk_coeff: 100.0
     accel_cmd_coeff: 50.0
-    steer_cmd_coeff: 250.0
-    steer_rate_coeff: 300.0
-    steer_rate_l2_coeff: 0.0
-    steer_accel_coeff: 0.0
-    cmd_slew_coeff: 0.0
+    steer_cmd_coeff: 100.0
+    steer_rate_coeff: 100.0
+    steer_rate_l2_coeff: 300.0
+    steer_accel_coeff: 300.0
+    cmd_slew_coeff: 500.0
+    # Spatial window for Menger curvature when cold-starting nominal steering.
+    nominal_curvature_min_chord_length_m: 1.5
     obstacle_collision_margin: 0.4
     road_border_collision_margin: 0.4
     drivable_area_crossing_coeff: 100.0
