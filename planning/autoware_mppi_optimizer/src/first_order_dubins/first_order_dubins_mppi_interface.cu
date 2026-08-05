@@ -41,6 +41,7 @@
 #include <array>
 #include <chrono>
 #include <cmath>
+#include <iterator>
 #include <memory>
 #include <numeric>
 #include <optional>
@@ -81,6 +82,26 @@ using SAMPLER = mppi::sampling_distributions::GaussianDistribution<DYN::DYN_PARA
 #endif
 
 using Mppi = VanillaMPPIController<DYN, COST, FB, kMppiHorizon, kNumRollouts, SAMPLER>;
+
+MppiIterationDiagnostics collectIterationDiagnostics(const Mppi & controller)
+{
+  MppiIterationDiagnostics diagnostics;
+  diagnostics.ess_per_iteration = controller.getEssPerIteration();
+  diagnostics.max_weight_per_iteration = controller.getMaxWeightPerIteration();
+
+  if (!diagnostics.ess_per_iteration.empty()) {
+    const auto min_ess_it =
+      std::min_element(diagnostics.ess_per_iteration.begin(), diagnostics.ess_per_iteration.end());
+    diagnostics.min_ess = *min_ess_it;
+    diagnostics.min_ess_iteration_index =
+      static_cast<int>(std::distance(diagnostics.ess_per_iteration.begin(), min_ess_it));
+  }
+  if (!diagnostics.max_weight_per_iteration.empty()) {
+    diagnostics.max_weight = *std::max_element(
+      diagnostics.max_weight_per_iteration.begin(), diagnostics.max_weight_per_iteration.end());
+  }
+  return diagnostics;
+}
 
 void applyUserCostParams(
   FirstOrderDubinsBicycleCostParams<kRefHorizon> & cost_params,
@@ -373,6 +394,7 @@ struct FirstOrderDubinsMppiInterface::Impl
   Mppi::control_trajectory u_nom = Mppi::control_trajectory::Zero();
   Mppi::control_trajectory u_opt = Mppi::control_trajectory::Zero();
   DYN::state_array x = DYN::state_array::Zero();
+  MppiIterationDiagnostics iteration_diagnostics;
 
   std::vector<float> obs_traj_x;
   std::vector<float> obs_traj_y;
@@ -713,6 +735,18 @@ struct FirstOrderDubinsMppiInterface::Impl
     controller->computeControl(x, 1);
     cudaStreamSynchronize(controller->stream_);
 
+    iteration_diagnostics = collectIterationDiagnostics(*controller);
+    const size_t diagnostic_count = std::min(
+      iteration_diagnostics.ess_per_iteration.size(),
+      iteration_diagnostics.max_weight_per_iteration.size());
+    for (size_t iteration = 0; iteration < diagnostic_count; ++iteration) {
+      RCLCPP_DEBUG(
+        mppiLogger(),
+        "MPPI optimization iteration=%zu total_iterations=%zu: ess=%.1f/%d "
+        "max_normalized_weight=%.9f",
+        iteration, diagnostic_count, iteration_diagnostics.ess_per_iteration[iteration],
+        kNumRollouts, iteration_diagnostics.max_weight_per_iteration[iteration]);
+    }
     const Mppi::control_trajectory u_opt_traj = controller->getControlSeq();
     u_opt = u_opt_traj;
 
@@ -734,13 +768,15 @@ struct FirstOrderDubinsMppiInterface::Impl
     control.steer_cmd =
       u_apply(static_cast<int>(FirstOrderDubinsBicycleParams::ControlIndex::STEER_CMD));
 
-    RCLCPP_DEBUG(
+    RCLCPP_INFO(
       mppiLogger(),
-      "MPPI track step %d: start_idx=%zu ref_v0=%.2f u_accel=%.3f u_steer=%.3f "
-      "ego_v=%.2f baseline_cost=%.2f",
+      "\tMPPI track step %d: start_idx=%zu ref_v0=%.2f u_accel=%.3f u_steer=%.3f "
+      "ego_v=%.2f baseline_cost=%.2f min_ess=%.1f/%d min_ess_iteration=%d "
+      "max_normalized_weight=%.9f",
       step_count, tracking_start_idx, ref.empty() ? 0.0F : ref.front().v, control.accel_cmd,
       control.steer_cmd, x(static_cast<int>(FirstOrderDubinsBicycleParams::StateIndex::VEL_X)),
-      controller->getBaselineCost());
+      controller->getBaselineCost(), iteration_diagnostics.min_ess, kNumRollouts,
+      iteration_diagnostics.min_ess_iteration_index, iteration_diagnostics.max_weight);
 
     return control;
   }
@@ -1058,6 +1094,7 @@ FirstOrderDubinsMppiOptimizationResult FirstOrderDubinsMppiInterface::optimizeTr
   result.debug.reference_trajectory = input;
   result.debug.optimized_trajectory = output;
   result.debug.validation = validation;
+  result.debug.iteration_diagnostics = impl_->iteration_diagnostics;
   if (impl_->enable_rollout_visualization) {
     buildRolloutVisualization(
       *impl_->controller, impl_->sampler, impl_->model, x_at_optimization,
@@ -1079,7 +1116,8 @@ FirstOrderDubinsMppiOptimizationResult FirstOrderDubinsMppiInterface::optimizeTr
   impl_->debug_trajectory_logger.writeParamsOnce(impl_->user_cost_params_, impl_->vehicle_params);
   impl_->debug_trajectory_logger.logFrame(
     result.debug.reference_trajectory, result.debug.optimized_trajectory, ego,
-    result.debug.baseline_cost, impl_->logged_nominal_accel, impl_->logged_nominal_steer);
+    result.debug.baseline_cost, impl_->logged_nominal_accel, impl_->logged_nominal_steer,
+    result.debug.iteration_diagnostics);
 
   RCLCPP_INFO(
     mppiLogger(),

@@ -16,6 +16,7 @@
 #define AUTOWARE__MPPI_OPTIMIZER__MPPI_DEBUG_TRAJECTORY_LOGGER_HPP_
 
 #include "autoware/mppi_optimizer/first_order_dubins_mppi_cost_params.hpp"
+#include "autoware/mppi_optimizer/first_order_dubins_mppi_interface.hpp"
 #include "autoware/mppi_optimizer/first_order_dubins_mppi_vehicle_params.hpp"
 
 #include <rclcpp/logging.hpp>
@@ -72,6 +73,7 @@ struct MppiDebugEgoState
  *   <log_dir>/000000_optimized.csv
  *   <log_dir>/000000_ego.csv
  *   <log_dir>/000000_nominal.csv   (u_nom accel/steer cmds used this cycle)
+ *   <log_dir>/000000_iteration_diagnostics.csv
  *   ...
  *
  * Trajectory CSV columns:
@@ -80,6 +82,8 @@ struct MppiDebugEgoState
  *   x,y,z,yaw,v,accel,steer
  * Nominal CSV columns:
  *   t_idx,accel_cmd,steer_cmd
+ * Iteration diagnostics CSV columns:
+ *   iteration,ess,max_normalized_weight
  */
 class MppiDebugTrajectoryLogger
 {
@@ -177,7 +181,8 @@ public:
     const autoware_planning_msgs::msg::Trajectory & reference,
     const autoware_planning_msgs::msg::Trajectory & optimized, const MppiDebugEgoState & ego,
     const double baseline_cost = 0.0, const std::vector<float> & nominal_accel_cmd = {},
-    const std::vector<float> & nominal_steer_cmd = {})
+    const std::vector<float> & nominal_steer_cmd = {},
+    const MppiIterationDiagnostics & iteration_diagnostics = {})
   {
     if (!enabled_) {
       return;
@@ -189,6 +194,8 @@ public:
     const std::string opt_path = directory_ + "/" + frame_tag + "_optimized.csv";
     const std::string ego_path = directory_ + "/" + frame_tag + "_ego.csv";
     const std::string nominal_path = directory_ + "/" + frame_tag + "_nominal.csv";
+    const std::string iteration_diagnostics_path =
+      directory_ + "/" + frame_tag + "_iteration_diagnostics.csv";
     if (
       !writeTrajectoryCsv(ref_path, reference) || !writeTrajectoryCsv(opt_path, optimized) ||
       !writeEgoCsv(ego_path, ego)) {
@@ -196,6 +203,13 @@ public:
     }
     if (!nominal_accel_cmd.empty() || !nominal_steer_cmd.empty()) {
       if (!writeNominalCsv(nominal_path, nominal_accel_cmd, nominal_steer_cmd)) {
+        return;
+      }
+    }
+    if (
+      !iteration_diagnostics.ess_per_iteration.empty() ||
+      !iteration_diagnostics.max_weight_per_iteration.empty()) {
+      if (!writeIterationDiagnosticsCsv(iteration_diagnostics_path, iteration_diagnostics)) {
         return;
       }
     }
@@ -211,7 +225,10 @@ public:
       return;
     }
     index << frame_id_ << "," << stamp.sec << "," << stamp.nanosec << "," << baseline_cost << ","
-          << reference.points.size() << "," << optimized.points.size() << "\n";
+          << reference.points.size() << "," << optimized.points.size() << ","
+          << iteration_diagnostics.ess_per_iteration.size() << "," << iteration_diagnostics.min_ess
+          << "," << iteration_diagnostics.min_ess_iteration_index << ","
+          << iteration_diagnostics.max_weight << "\n";
     ++frame_id_;
   }
 
@@ -232,7 +249,8 @@ private:
     if (!std::filesystem::exists(index_path)) {
       std::ofstream index(index_path);
       if (index) {
-        index << "frame_id,stamp_sec,stamp_nsec,baseline_cost,n_reference,n_optimized\n";
+        index << "frame_id,stamp_sec,stamp_nsec,baseline_cost,n_reference,n_optimized,"
+                 "n_iterations,min_ess,min_ess_iteration_index,max_normalized_weight\n";
       }
     }
     index_initialized_ = true;
@@ -291,6 +309,31 @@ private:
     out << std::setprecision(9) << std::fixed;
     for (size_t i = 0; i < n; ++i) {
       out << i << "," << accel_cmd[i] << "," << steer_cmd[i] << "\n";
+    }
+    return true;
+  }
+
+  static bool writeIterationDiagnosticsCsv(
+    const std::string & path, const MppiIterationDiagnostics & diagnostics)
+  {
+    if (diagnostics.ess_per_iteration.size() != diagnostics.max_weight_per_iteration.size()) {
+      RCLCPP_ERROR(
+        rclcpp::get_logger("mppi_debug_trajectory_logger"),
+        "Cannot write %s: ESS and maximum-weight history sizes differ", path.c_str());
+      return false;
+    }
+
+    std::ofstream out(path);
+    if (!out) {
+      RCLCPP_ERROR(
+        rclcpp::get_logger("mppi_debug_trajectory_logger"), "Failed to write %s", path.c_str());
+      return false;
+    }
+    out << "iteration,ess,max_normalized_weight\n";
+    out << std::setprecision(9) << std::fixed;
+    for (size_t i = 0; i < diagnostics.ess_per_iteration.size(); ++i) {
+      out << i << "," << diagnostics.ess_per_iteration[i] << ","
+          << diagnostics.max_weight_per_iteration[i] << "\n";
     }
     return true;
   }

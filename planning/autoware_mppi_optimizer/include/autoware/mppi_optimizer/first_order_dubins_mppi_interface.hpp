@@ -54,6 +54,15 @@ struct FirstOrderDubinsMppiControl
   float steer_cmd{0.0F};
 };
 
+struct MppiIterationDiagnostics
+{
+  std::vector<float> ess_per_iteration;         // Size M (one value per optimization iteration).
+  std::vector<float> max_weight_per_iteration;  // Size M (one value per optimization iteration).
+  float min_ess{0.0F};
+  float max_weight{0.0F};
+  int min_ess_iteration_index{-1};
+};
+
 struct FirstOrderDubinsMppiRollout
 {
   std::vector<std::pair<float, float>> points;
@@ -102,6 +111,8 @@ struct FirstOrderDubinsMppiDebug
   std::vector<std::pair<float, float>> optimal_horizon;
   std::vector<FirstOrderDubinsMppiRollout> rollouts;
   float baseline_cost{0.0F};
+  /** Importance-weight diagnostics for every optimization iteration in this solve. */
+  MppiIterationDiagnostics iteration_diagnostics;
   /** Hard-constraint validation of the generated post-step states. */
   FirstOrderDubinsMppiValidationResult validation;
   /** True when skip_if_invalid replaced the optimized trajectory with the input trajectory. */
