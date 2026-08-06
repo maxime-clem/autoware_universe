@@ -511,7 +511,7 @@ struct FirstOrderDubinsMppiInterface::Impl
     // a zero (or explicit) steer seed, not from huge white noise.
     // Historical: 0.001 * (L/0.32) ≈ 0.015 rad on j6; 0.01 * (L/0.32) ≈ 0.15 rad was too noisy.
     constexpr float kReferenceWheelBase = 0.32F;
-    constexpr float kReferenceSteerStd = 2e-3F;
+    constexpr float kReferenceSteerStd = 1.5e-3F;
     const float steer_std = kReferenceSteerStd * (vehicle_params.wheel_base / kReferenceWheelBase);
 
     sp.std_dev[static_cast<int>(FirstOrderDubinsBicycleParams::ControlIndex::STEER_CMD)] =
@@ -523,7 +523,7 @@ struct FirstOrderDubinsMppiInterface::Impl
     // reach while cutting high-frequency δ_cmd chatter from i.i.d. Gaussian samples.
     sp.exponents[static_cast<int>(FirstOrderDubinsBicycleParams::ControlIndex::ACCELERATION_CMD)] =
       0.5F;
-    sp.exponents[static_cast<int>(FirstOrderDubinsBicycleParams::ControlIndex::STEER_CMD)] = 2.0F;
+    sp.exponents[static_cast<int>(FirstOrderDubinsBicycleParams::ControlIndex::STEER_CMD)] = 1.5F;
 #elif defined(USE_SMOOTH_MPPI)
     // Smooth-MPPI samples action derivatives and integrates with dt.
     sp.dt = kDt;
