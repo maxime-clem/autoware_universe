@@ -289,6 +289,7 @@ private:
   std::shared_ptr<autoware::avoidance_target_detector::ExtendedRouteHandler>
     extended_route_handler_;
   autoware::avoidance_target_detector::TrackedObjectSelector object_selector_;
+  double mppi_object_filter_margin_m_{0.0};
   HADMapBin lanelet_map_msg_;
   LaneletRoute prev_route_;
 };

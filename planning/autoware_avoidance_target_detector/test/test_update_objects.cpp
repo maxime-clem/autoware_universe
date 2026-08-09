@@ -32,6 +32,7 @@
 #include <cstddef>
 #include <cstdint>
 #include <memory>
+#include <stdexcept>
 #include <string>
 #include <utility>
 #include <vector>
@@ -139,6 +140,21 @@ Trajectory make_single_point_trajectory(const double x)
   point.pose.position.x = x;
   point.pose.orientation.w = 1.0;
   trajectory.points.push_back(point);
+  return trajectory;
+}
+
+Trajectory make_timed_filter_trajectory()
+{
+  Trajectory trajectory;
+  trajectory.header.frame_id = "map";
+  TrajectoryPoint start;
+  start.pose.orientation.w = 1.0;
+  trajectory.points.push_back(start);
+  TrajectoryPoint end;
+  end.pose.position.x = 10.0;
+  end.pose.orientation.w = 1.0;
+  end.time_from_start.sec = 5;
+  trajectory.points.push_back(end);
   return trajectory;
 }
 
@@ -464,6 +480,48 @@ TYPED_TEST(UpdateObjectsTest, FirstObservationBypassesAllTransitionMatrices)
   EXPECT_DOUBLE_EQ(target_filter.get_posterior(), 0.95);
   EXPECT_DOUBLE_EQ(stationary_filter.get_posterior(), 0.99);
   EXPECT_DOUBLE_EQ(deviation_filter.get_posterior(), 0.05);
+}
+
+TYPED_TEST(UpdateObjectsTest, RangeFilterUsesCircularObjectFootprints)
+{
+  const auto objects = make_objects<TypeParam>(
+    {make_object<TypeParam>(1, 5.0, 4.0), make_object<TypeParam>(2, 5.0, 5.0)});
+
+  const auto filtered = filter_objects_in_range(objects, make_timed_filter_trajectory(), 2.0);
+
+  EXPECT_EQ(object_ids(filtered), std::vector<uint8_t>({1}));
+  EXPECT_EQ(filtered.header, objects.header);
+}
+
+TYPED_TEST(UpdateObjectsTest, RangeFilterRetainsObjectsProjectedIntoRange)
+{
+  const auto objects = make_objects<TypeParam>(
+    {make_object<TypeParam>(1, -10.0, 0.0, 3.0), make_object<TypeParam>(2, -10.0, 10.0, 3.0)});
+
+  const auto filtered = filter_objects_in_range(objects, make_timed_filter_trajectory(), 1.0);
+
+  EXPECT_EQ(object_ids(filtered), std::vector<uint8_t>({1}));
+}
+
+TYPED_TEST(UpdateObjectsTest, RangeFilterRetainsMovingObjectsWithoutProjectionHorizon)
+{
+  const auto objects = make_objects<TypeParam>({make_object<TypeParam>(1, -100.0, 100.0, 3.0)});
+
+  const auto filtered = filter_objects_in_range(objects, this->trajectory_, 1.0);
+
+  EXPECT_EQ(object_ids(filtered), std::vector<uint8_t>({1}));
+}
+
+TYPED_TEST(UpdateObjectsTest, RangeFilterRejectsInvalidMargins)
+{
+  const auto objects = make_objects<TypeParam>({make_object<TypeParam>(1, 5.0, 0.0)});
+
+  EXPECT_THROW(
+    {
+      const auto filtered = filter_objects_in_range(objects, make_timed_filter_trajectory(), -1.0);
+      (void)filtered;
+    },
+    std::invalid_argument);
 }
 
 TYPED_TEST(UpdateObjectsTest, LongitudinalFilterPrunesStateQualifiedTarget)

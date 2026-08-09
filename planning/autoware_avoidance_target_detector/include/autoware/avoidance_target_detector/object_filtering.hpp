@@ -310,6 +310,23 @@ using PredictedObjectSelector = ObjectSelectorBase<PredictedObject>;
 using TrackedObjectSelector = ObjectSelectorBase<TrackedObject>;
 
 /**
+ * @brief Retain objects whose projected circular footprint reaches a trajectory corridor.
+ * @details Projects each object with constant object-frame longitudinal velocity over the
+ *          trajectory time horizon. The margin expands the trajectory from the base_link path.
+ *          The returned message preserves the input header and object order.
+ */
+[[nodiscard]] PredictedObjects filter_objects_in_range(
+  const PredictedObjects & objects, const Trajectory & trajectory, double margin);
+
+/**
+ * @brief Retain tracked objects whose projected circular footprint reaches a trajectory corridor.
+ * @details Uses the same constant object-frame longitudinal velocity model as the tracked-object
+ *          MPPI adapter. The returned message preserves the input header and object order.
+ */
+[[nodiscard]] TrackedObjects filter_objects_in_range(
+  const TrackedObjects & objects, const Trajectory & trajectory, double margin);
+
+/**
  * @brief Check whether the object footprint lies beyond the trajectory end in arc-length.
  * @param trajectory Reference trajectory.
  * @param object Object.

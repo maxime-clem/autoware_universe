@@ -33,6 +33,7 @@
 #include <limits>
 #include <memory>
 #include <optional>
+#include <stdexcept>
 #include <utility>
 #include <vector>
 
@@ -49,6 +50,7 @@ constexpr double k_s_position_epsilon_m = 1e-3;
 constexpr double k_high_likelihood = 0.95;
 constexpr double k_low_likelihood = 0.05;
 constexpr double k_neutral_likelihood = 0.5;
+constexpr double k_motion_epsilon = 1e-6;
 
 // Kinematics accessors abstracting the field differences between object message types.
 const geometry_msgs::msg::Pose & get_object_pose(const PredictedObject & object)
@@ -167,6 +169,117 @@ double linear_velocity_norm(const ObjectT & object)
 {
   const auto & linear = get_object_twist(object).linear;
   return std::hypot(linear.x, linear.y, linear.z);
+}
+
+double trajectory_horizon_seconds(const Trajectory & trajectory)
+{
+  double horizon = 0.0;
+  for (const auto & point : trajectory.points) {
+    const double seconds = static_cast<double>(point.time_from_start.sec) +
+                           static_cast<double>(point.time_from_start.nanosec) * 1.0e-9;
+    horizon = std::max(horizon, seconds);
+  }
+  return horizon;
+}
+
+template <typename ObjectT>
+double circular_footprint_radius(const ObjectT & object)
+{
+  const auto center = get_object_pose(object).position;
+  const auto footprint = autoware_utils_geometry::to_polygon2d(object);
+  double radius = 0.0;
+  for (const auto & point : footprint.outer()) {
+    radius = std::max(radius, std::hypot(point.x() - center.x, point.y() - center.y));
+  }
+  return radius;
+}
+
+double point_to_segment_distance(
+  const autoware_utils_geometry::Point2d & point, const autoware_utils_geometry::Point2d & start,
+  const autoware_utils_geometry::Point2d & end)
+{
+  const double vx = end.x() - start.x();
+  const double vy = end.y() - start.y();
+  const double length_squared = vx * vx + vy * vy;
+  if (length_squared <= k_motion_epsilon) {
+    return std::hypot(point.x() - start.x(), point.y() - start.y());
+  }
+  const double projection = std::clamp(
+    ((point.x() - start.x()) * vx + (point.y() - start.y()) * vy) / length_squared, 0.0, 1.0);
+  return std::hypot(
+    point.x() - (start.x() + projection * vx), point.y() - (start.y() + projection * vy));
+}
+
+double projected_path_to_trajectory_distance(
+  const autoware_utils_geometry::Point2d & motion_start,
+  const autoware_utils_geometry::Point2d & motion_end, const Trajectory & trajectory)
+{
+  if (trajectory.points.size() == 1U) {
+    const auto & point = trajectory.points.front().pose.position;
+    return point_to_segment_distance(
+      autoware_utils_geometry::Point2d{point.x, point.y}, motion_start, motion_end);
+  }
+
+  const bool is_stationary =
+    std::hypot(motion_end.x() - motion_start.x(), motion_end.y() - motion_start.y()) <=
+    k_motion_epsilon;
+  const autoware_utils_geometry::Segment2d motion_segment{motion_start, motion_end};
+  double distance = std::numeric_limits<double>::infinity();
+  for (std::size_t index = 1; index < trajectory.points.size(); ++index) {
+    const auto & start = trajectory.points[index - 1].pose.position;
+    const auto & end = trajectory.points[index].pose.position;
+    const autoware_utils_geometry::Point2d trajectory_start{start.x, start.y};
+    const autoware_utils_geometry::Point2d trajectory_end{end.x, end.y};
+    if (is_stationary) {
+      distance = std::min(
+        distance, point_to_segment_distance(motion_start, trajectory_start, trajectory_end));
+    } else {
+      const autoware_utils_geometry::Segment2d trajectory_segment{trajectory_start, trajectory_end};
+      distance = std::min(distance, boost::geometry::distance(motion_segment, trajectory_segment));
+    }
+  }
+  return distance;
+}
+
+template <typename ObjectsT>
+ObjectsT filter_objects_in_range_impl(
+  const ObjectsT & objects, const Trajectory & trajectory, const double margin)
+{
+  if (!std::isfinite(margin) || margin < 0.0) {
+    throw std::invalid_argument("The object filter margin must be finite and nonnegative");
+  }
+  if (trajectory.points.empty()) {
+    return objects;
+  }
+
+  const double horizon = trajectory_horizon_seconds(trajectory);
+  ObjectsT filtered;
+  filtered.header = objects.header;
+  filtered.objects.reserve(objects.objects.size());
+  for (const auto & object : objects.objects) {
+    const auto & pose = get_object_pose(object);
+    const double speed = get_object_twist(object).linear.x;
+    if (horizon <= k_motion_epsilon && std::abs(speed) > k_motion_epsilon) {
+      filtered.objects.push_back(object);
+      continue;
+    }
+
+    const auto & orientation = pose.orientation;
+    const double yaw = std::atan2(
+      2.0 * (orientation.w * orientation.z + orientation.x * orientation.y),
+      1.0 - 2.0 * (orientation.y * orientation.y + orientation.z * orientation.z));
+    const autoware_utils_geometry::Point2d motion_start{pose.position.x, pose.position.y};
+    const autoware_utils_geometry::Point2d motion_end{
+      pose.position.x + speed * std::cos(yaw) * horizon,
+      pose.position.y + speed * std::sin(yaw) * horizon};
+    const double object_radius = circular_footprint_radius(object);
+    const double distance =
+      projected_path_to_trajectory_distance(motion_start, motion_end, trajectory);
+    if (distance <= margin + object_radius) {
+      filtered.objects.push_back(object);
+    }
+  }
+  return filtered;
 }
 
 /**
@@ -864,6 +977,18 @@ bool should_filter_out_by_lateral_distance(
 }
 
 }  // namespace
+
+PredictedObjects filter_objects_in_range(
+  const PredictedObjects & objects, const Trajectory & trajectory, const double margin)
+{
+  return filter_objects_in_range_impl(objects, trajectory, margin);
+}
+
+TrackedObjects filter_objects_in_range(
+  const TrackedObjects & objects, const Trajectory & trajectory, const double margin)
+{
+  return filter_objects_in_range_impl(objects, trajectory, margin);
+}
 
 template <typename ObjectT>
 bool is_object_beyond_trajectory_end(const Trajectory & trajectory_msg, const ObjectT & object)

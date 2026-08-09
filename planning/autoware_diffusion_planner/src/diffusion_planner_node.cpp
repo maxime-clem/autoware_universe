@@ -30,6 +30,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <cstddef>
 #include <fstream>
 #include <functional>
@@ -636,8 +637,9 @@ void DiffusionPlanner::on_timer()
     stop_watch_ptr_->tic("mppi_optimizer");
     if (!mppi_optimizer_ || prev_route_.header.stamp != core_->get_route()->header.stamp) {
       mppi_optimizer_ = std::make_unique<autoware::mppi_optimizer::FirstOrderDubinsMppiInterface>();
-      mppi_optimizer_->setCostParams(
-        autoware::mppi_optimizer::get_first_order_dubins_mppi_cost_params(*this));
+      const auto cost_params =
+        autoware::mppi_optimizer::get_first_order_dubins_mppi_cost_params(*this);
+      mppi_optimizer_->setCostParams(cost_params);
       mppi_optimizer_->setVehicleParams(
         autoware::mppi_optimizer::get_first_order_dubins_mppi_vehicle_params(*this));
       mppi_optimizer_->setRuntimeOptions(
@@ -647,6 +649,13 @@ void DiffusionPlanner::on_timer()
         std::make_shared<autoware::avoidance_target_detector::ExtendedRouteHandler>(
           lanelet_map_msg_, prev_route_);
       extended_route_handler_->create_map();
+      const double max_longitudinal_offset = std::max(
+        std::abs(vehicle_info_.min_longitudinal_offset_m),
+        std::abs(vehicle_info_.max_longitudinal_offset_m));
+      const double max_lateral_offset = std::max(
+        std::abs(vehicle_info_.min_lateral_offset_m), std::abs(vehicle_info_.max_lateral_offset_m));
+      mppi_object_filter_margin_m_ =
+        std::hypot(max_longitudinal_offset, max_lateral_offset) + cost_params.boundary_threshold;
     }
 
     try {
@@ -659,11 +668,15 @@ void DiffusionPlanner::on_timer()
       const std::optional<SteeringReport> ego_steering =
         steering_status ? std::make_optional(*steering_status) : std::nullopt;
 
+      const auto objects_in_range = autoware::avoidance_target_detector::filter_objects_in_range(
+        *objects, planner_output.trajectory, mppi_object_filter_margin_m_);
       object_selector_.update_objects(
-        now(), *objects, planner_output.trajectory, *extended_route_handler_);
+        now(), objects_in_range, planner_output.trajectory, *extended_route_handler_);
       auto avoidance_targets = object_selector_.get_avoidance_targets(
-        *objects, planner_output.trajectory, extended_route_handler_->get_extended_route_bounds());
-      const auto driving_along_targets = object_selector_.get_driving_along_vehicles(*objects);
+        objects_in_range, planner_output.trajectory,
+        extended_route_handler_->get_extended_route_bounds());
+      const auto driving_along_targets =
+        object_selector_.get_driving_along_vehicles(objects_in_range);
 
       const auto margin = vehicle_info_.max_longitudinal_offset_m + 1.0;
 
