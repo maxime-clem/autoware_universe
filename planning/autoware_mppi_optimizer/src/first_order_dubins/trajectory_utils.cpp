@@ -92,7 +92,8 @@ InitialState makeInitialState(
 }
 
 std::vector<ReferenceSample> buildReferenceHorizon(
-  const Trajectory & trajectory, const InitialState & ego, const int horizon, const float dt, const size_t start_idx)
+  const Trajectory & trajectory, const InitialState & ego, const int horizon, const float dt,
+  const size_t start_idx)
 {
   const size_t sample_count = std::max(0, horizon);
   std::vector<ReferenceSample> reference(static_cast<std::size_t>(sample_count));
@@ -170,11 +171,6 @@ float computeMengerCurvatureWithMinChord(
   const double cross =
     (center.x - first.x) * (last.y - first.y) - (center.y - first.y) * (last.x - first.x);
   return static_cast<float>(2.0 * cross / denominator);
-}
-
-float path_curvature_at(const Trajectory & reference, const std::size_t idx) noexcept
-{
-  return computeMengerCurvatureWithMinChord(reference.points, idx);
 }
 
 std::vector<FirstOrderDubinsMppiControl> buildDiffusionNominalControl(

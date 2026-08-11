@@ -178,7 +178,7 @@ TEST(NominalControl, CopiesClampsPadsAndDerivesSteeringFromCurvature)
   // 2. Compute expected Menger curvature for the 3 points in makeTrajectory(3U, 2.0, ...)
   // Points are: p0=(0, 0), p1=(2.0, -0.5), p2=(4.0, -1.0) -> Note: collinear if y is linear!
   // To test curvature, let's make p1 slightly offset so it has real curvature:
-  const float expected_curvature = path_curvature_at(trajectory, 0U);
+  const float expected_curvature = computeMengerCurvatureWithMinChord(trajectory.points, 0U, 1.5);
   EXPECT_NEAR(nominal[0].steer_cmd, std::atan(vehicle.wheel_base * expected_curvature), 1.0E-6F);
 
   EXPECT_FLOAT_EQ(nominal[1].accel_cmd, vehicle.min_accel());
