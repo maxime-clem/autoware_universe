@@ -30,6 +30,9 @@ struct FirstOrderDubinsMppiCostParams
   float heading_coeff{500.0F};
   float lateral_distance_coeff{0.0F};
   float lateral_yaw_error_coeff{0.0F};
+  float track_center_coeff{0.0F};
+  float corner_buffer_coeff{0.0F};
+  float corner_safe_margin{0.3F};
   float crash_coeff{100000.0F};
   float boundary_threshold{1.5F};
   float accel_cmd_coeff{0.0F};

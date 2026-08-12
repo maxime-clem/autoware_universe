@@ -12,6 +12,11 @@
     # Spatial (closest-segment) costs restored from pre time-indexed tracking; 0 = off.
     lateral_distance_coeff: 0.0
     lateral_yaw_error_coeff: 0.0
+    # Track the center of the ego footprint against the time-indexed reference; 0 = off.
+    track_center_coeff: 0.0
+    # Soft clearance cost for ego corners near drivable-area boundaries; 0 = off.
+    corner_buffer_coeff: 0.0
+    corner_safe_margin: 0.3
     crash_coeff: 100000.0
     boundary_threshold: 0.8
     lateral_acceleration_coeff: 100.0

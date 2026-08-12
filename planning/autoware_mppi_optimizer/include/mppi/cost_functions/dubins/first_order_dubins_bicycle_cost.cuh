@@ -25,6 +25,12 @@ struct FirstOrderDubinsBicycleCostParams : public CostParams<2>
   float lateral_distance_coeff = 0.0F;
   /** Spatial yaw error vs closest-segment tangent: coeff * Δψ^2; 0 disables. */
   float lateral_yaw_error_coeff = 0.0F;
+  /** Track the ego footprint center, rather than its rear-axle state, against ref[t]. */
+  float track_center_coeff = 0.0F;
+  /** Quadratic soft cost for ego corners closer than corner_safe_margin to a boundary. */
+  float corner_buffer_coeff = 0.0F;
+  /** Desired minimum distance [m] from each ego corner to drivable-area boundary segments. */
+  float corner_safe_margin = 0.3F;
   /** Crash penalty scale; latched crash_status is 1=lateral, 2=obstacle, 3=road border. */
   float crash_coeff = 100000.0F;
   float boundary_threshold = 0.8F;
@@ -116,6 +122,13 @@ public:
    * reference segment. Used by lateral_yaw_error_coeff.
    */
   __host__ __device__ float computeLateralYawErrorValue(float x, float y, float yaw) const;
+
+  /** Distance from the ego footprint center to the time-aligned reference sample. */
+  __host__ __device__ float computeTrackCenterValue(
+    float x, float y, float yaw, int timestep) const;
+
+  /** Soft clearance cost for ego corners near drivable-area boundary segments. */
+  __host__ __device__ float computeCornerBufferCost(float x, float y, float yaw) const;
 
   /** True if the lateral error exceeds boundary_threshold(_left/_right). */
   __host__ __device__ bool exceedsLateralBoundary(const float x, const float y) const;

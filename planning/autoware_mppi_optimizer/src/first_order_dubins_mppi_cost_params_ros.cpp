@@ -35,13 +35,15 @@ void declare_first_order_dubins_mppi_cost_params(rclcpp::Node & node, const std:
   node.declare_parameter(param_name(prefix, "desired_speed"), defaults.desired_speed);
   node.declare_parameter(param_name(prefix, "speed_coeff"), defaults.speed_coeff);
   node.declare_parameter(param_name(prefix, "track_coeff"), defaults.track_coeff);
-  node.declare_parameter(
-    param_name(prefix, "track_terminal_scale"), defaults.track_terminal_scale);
+  node.declare_parameter(param_name(prefix, "track_terminal_scale"), defaults.track_terminal_scale);
   node.declare_parameter(param_name(prefix, "heading_coeff"), defaults.heading_coeff);
   node.declare_parameter(
     param_name(prefix, "lateral_distance_coeff"), defaults.lateral_distance_coeff);
   node.declare_parameter(
     param_name(prefix, "lateral_yaw_error_coeff"), defaults.lateral_yaw_error_coeff);
+  node.declare_parameter(param_name(prefix, "track_center_coeff"), defaults.track_center_coeff);
+  node.declare_parameter(param_name(prefix, "corner_buffer_coeff"), defaults.corner_buffer_coeff);
+  node.declare_parameter(param_name(prefix, "corner_safe_margin"), defaults.corner_safe_margin);
   node.declare_parameter(param_name(prefix, "crash_coeff"), defaults.crash_coeff);
   node.declare_parameter(param_name(prefix, "boundary_threshold"), defaults.boundary_threshold);
   node.declare_parameter(param_name(prefix, "accel_cmd_coeff"), defaults.accel_cmd_coeff);
@@ -78,14 +80,20 @@ FirstOrderDubinsMppiCostParams get_first_order_dubins_mppi_cost_params(
     static_cast<float>(node.get_parameter(param_name(prefix, "speed_coeff")).as_double());
   params.track_coeff =
     static_cast<float>(node.get_parameter(param_name(prefix, "track_coeff")).as_double());
-  params.track_terminal_scale = static_cast<float>(
-    node.get_parameter(param_name(prefix, "track_terminal_scale")).as_double());
+  params.track_terminal_scale =
+    static_cast<float>(node.get_parameter(param_name(prefix, "track_terminal_scale")).as_double());
   params.heading_coeff =
     static_cast<float>(node.get_parameter(param_name(prefix, "heading_coeff")).as_double());
   params.lateral_distance_coeff = static_cast<float>(
     node.get_parameter(param_name(prefix, "lateral_distance_coeff")).as_double());
   params.lateral_yaw_error_coeff = static_cast<float>(
     node.get_parameter(param_name(prefix, "lateral_yaw_error_coeff")).as_double());
+  params.track_center_coeff =
+    static_cast<float>(node.get_parameter(param_name(prefix, "track_center_coeff")).as_double());
+  params.corner_buffer_coeff =
+    static_cast<float>(node.get_parameter(param_name(prefix, "corner_buffer_coeff")).as_double());
+  params.corner_safe_margin =
+    static_cast<float>(node.get_parameter(param_name(prefix, "corner_safe_margin")).as_double());
   params.crash_coeff =
     static_cast<float>(node.get_parameter(param_name(prefix, "crash_coeff")).as_double());
   params.boundary_threshold =

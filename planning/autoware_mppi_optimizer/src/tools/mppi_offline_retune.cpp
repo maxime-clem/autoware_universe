@@ -145,6 +145,12 @@ void applyCostParam(
     params.lateral_distance_coeff = value;
   } else if (key == "lateral_yaw_error_coeff") {
     params.lateral_yaw_error_coeff = value;
+  } else if (key == "track_center_coeff") {
+    params.track_center_coeff = value;
+  } else if (key == "corner_buffer_coeff") {
+    params.corner_buffer_coeff = value;
+  } else if (key == "corner_safe_margin") {
+    params.corner_safe_margin = value;
   } else if (key == "crash_coeff") {
     params.crash_coeff = value;
   } else if (key == "boundary_threshold") {

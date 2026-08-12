@@ -125,6 +125,9 @@ void applyUserCostParams(
   cost_params.heading_coeff = user.heading_coeff;
   cost_params.lateral_distance_coeff = user.lateral_distance_coeff;
   cost_params.lateral_yaw_error_coeff = user.lateral_yaw_error_coeff;
+  cost_params.track_center_coeff = user.track_center_coeff;
+  cost_params.corner_buffer_coeff = user.corner_buffer_coeff;
+  cost_params.corner_safe_margin = user.corner_safe_margin;
   cost_params.crash_coeff = user.crash_coeff;
   cost_params.boundary_threshold = user.boundary_threshold;
   cost_params.accel_cmd_coeff = user.accel_cmd_coeff;
