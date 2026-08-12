@@ -315,8 +315,6 @@ __host__ __device__ float FirstOrderDubinsBicycleCostImpl<
   CLASS_T, NUM_TIMESTEPS, PARAMS_T,
   DYN_PARAMS_T>::computeLateralDistanceValue(const float x, const float y) const
 {
-  // Restored spatial track from before time-indexed tracking: min distance to the
-  // reference polyline (closest segment).
   float min_dist = 0.0F;
   if (NUM_TIMESTEPS <= 1) {
     min_dist = vectorLength(x - ref_x_[0], y - ref_y_[0]);
@@ -382,31 +380,11 @@ __host__ __device__ float FirstOrderDubinsBicycleCostImpl<
 }
 
 template <class CLASS_T, int NUM_TIMESTEPS, class PARAMS_T, class DYN_PARAMS_T>
-__host__ __device__ float FirstOrderDubinsBicycleCostImpl<
-  CLASS_T, NUM_TIMESTEPS, PARAMS_T,
-  DYN_PARAMS_T>::computeSignedLateralOffset(const float x, const float y, int timestep) const
-{
-  const int t = timestep < 0 ? 0 : (timestep >= NUM_TIMESTEPS ? NUM_TIMESTEPS - 1 : timestep);
-  const float dx = x - ref_x_[t];
-  const float dy = y - ref_y_[t];
-#ifdef __CUDA_ARCH__
-  return -dx * sinf(ref_yaw_[t]) + dy * cosf(ref_yaw_[t]);
-#else
-  return -dx * std::sin(ref_yaw_[t]) + dy * std::cos(ref_yaw_[t]);
-#endif
-}
-
-template <class CLASS_T, int NUM_TIMESTEPS, class PARAMS_T, class DYN_PARAMS_T>
 __host__ __device__ bool FirstOrderDubinsBicycleCostImpl<
   CLASS_T, NUM_TIMESTEPS, PARAMS_T,
-  DYN_PARAMS_T>::exceedsLateralBoundary(const float x, const float y, int timestep) const
+  DYN_PARAMS_T>::exceedsLateralBoundary(const float x, const float y) const
 {
-  const float signed_lat = computeSignedLateralOffset(x, y, timestep);
-#ifdef __CUDA_ARCH__
-  return fabsf(signed_lat) >= this->params_.boundary_threshold;
-#else
-  return std::fabs(signed_lat) >= this->params_.boundary_threshold;
-#endif
+  return computeLateralDistanceValue(x, y) >= this->params_.boundary_threshold;
 }
 
 template <class CLASS_T, int NUM_TIMESTEPS, class PARAMS_T, class DYN_PARAMS_T>
@@ -509,7 +487,7 @@ FirstOrderDubinsBicycleCostImpl<CLASS_T, NUM_TIMESTEPS, PARAMS_T, DYN_PARAMS_T>:
     const float x, const float y, const float yaw, const int timestep, int * crash_status) const
 {
   // Priority encoding (first match wins): 1=lateral bound, 2=obstacle, 3=road border.
-  const bool beyond_lateral_bound = exceedsLateralBoundary(x, y, timestep);
+  const bool beyond_lateral_bound = exceedsLateralBoundary(x, y);
   const bool hit_car = egoIntersectsObstacleAtStep(x, y, yaw, timestep);
   const bool hit_road_border = egoIntersectsRoadBorder(x, y, yaw);
   const int code = beyond_lateral_bound ? 1 : hit_car ? 2 : hit_road_border ? 3 : 0;

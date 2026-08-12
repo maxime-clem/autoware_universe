@@ -32,7 +32,7 @@ template <class Cost>
     const auto & state = states[i];
     const int timestep = static_cast<int>(i);
     auto reasons = FirstOrderDubinsMppiInvalidityReason::none;
-    if (cost.exceedsLateralBoundary(state.x, state.y, timestep)) {
+    if (cost.exceedsLateralBoundary(state.x, state.y)) {
       reasons = reasons | FirstOrderDubinsMppiInvalidityReason::lateral_boundary;
     }
     if (cost.egoIntersectsObstacleAtStep(state.x, state.y, state.yaw, timestep)) {

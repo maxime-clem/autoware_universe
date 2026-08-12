@@ -117,11 +117,8 @@ public:
    */
   __host__ __device__ float computeLateralYawErrorValue(float x, float y, float yaw) const;
 
-  /** Signed lateral error from ref[t], resolved in ref_yaw[t] (+ = reference-left). */
-  __host__ __device__ float computeSignedLateralOffset(float x, float y, int timestep) const;
-
-  /** True if the time-aligned lateral error exceeds boundary_threshold(_left/_right). */
-  __host__ __device__ bool exceedsLateralBoundary(const float x, const float y, int timestep) const;
+  /** True if the lateral error exceeds boundary_threshold(_left/_right). */
+  __host__ __device__ bool exceedsLateralBoundary(const float x, const float y) const;
 
   __host__ __device__ bool egoIntersectsObstacleAtStep(
     const float x, const float y, const float yaw, int timestep) const;
