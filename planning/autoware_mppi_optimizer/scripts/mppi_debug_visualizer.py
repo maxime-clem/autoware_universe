@@ -33,6 +33,10 @@ Retune also writes <out_dir>/NNNNNN_costs.csv:
   rollout_index,raw_cost,normalized_weight
 (used for cost / weight distribution histograms in --enable-retune mode).
 
+and <out_dir>/NNNNNN_cost_breakdown.csv:
+  key,value
+(selected output trajectory cost components used for the stacked bar).
+
 and <out_dir>/NNNNNN_rollouts.csv:
   rollout_index,cost,step,x,y[,is_worst]
 (top-weighted and high-cost samples for XY overlay).
@@ -284,10 +288,12 @@ class MppiDebugFrame:
     wheel_base: float = VEHICLE_PARAMS_DEFAULT_WHEEL_BASE
     raw_costs: List[float] = field(default_factory=list)
     normalized_weights: List[float] = field(default_factory=list)
+    cost_breakdown: Dict[str, float] = field(default_factory=dict)
     # Retune rollouts: (cost, xs, ys, is_worst) from NNNNNN_rollouts.csv.
     rollouts: List[Tuple[float, List[float], List[float], bool]] = field(default_factory=list)
     stamp_text: str = ""
     metrics_text: str = ""
+    retune_status: str = ""
     # Live: whether diffusion_planner is applying MPPI to the published trajectory.
     # None = unknown / offline; False = disabled or shadow; True = applied.
     mppi_enabled: Optional[bool] = None
@@ -593,6 +599,8 @@ def frame_from_loaded(
     steer_time_constant: float = VEHICLE_PARAMS_DEFAULT_STEER_TIME_CONSTANT,
     wheel_base: float = VEHICLE_PARAMS_DEFAULT_WHEEL_BASE,
     retune_crash_status: Optional[int] = None,
+    cost_breakdown: Optional[Dict[str, float]] = None,
+    retune_status: str = "",
 ) -> MppiDebugFrame:
     frame = MppiDebugFrame(
         reference_xy=(reference.x, reference.y) if reference.x else None,
@@ -617,8 +625,10 @@ def frame_from_loaded(
         wheel_base=wheel_base,
         raw_costs=costs.raw_costs if costs else [],
         normalized_weights=costs.normalized_weights if costs else [],
+        cost_breakdown=dict(cost_breakdown) if cost_breakdown else {},
         rollouts=list(rollouts) if rollouts else [],
         stamp_text=stamp_text,
+        retune_status=retune_status,
     )
     orig_pos = max_pos_err(frame.reference_xy, frame.optimized_xy)
     orig_vel = max_vel_err(frame.reference_vel, frame.optimized_vel)
@@ -703,10 +713,32 @@ def reset_view_baselines(axes) -> None:
         ax.autoscale_view()
 
 
+def retune_placeholder(frame: MppiDebugFrame) -> str:
+    if frame.retune_status and frame.retune_status != "Ready":
+        return f"No retune data produced\n{frame.retune_status}"
+    return "Retune to populate"
+
+
 def draw_frame(axes, frame: MppiDebugFrame) -> None:
     saved_views = [(ax, capture_user_view(ax)) for ax in axes if ax is not None]
 
-    if len(axes) >= 11:
+    if len(axes) >= 12:
+        (
+            ax_xy,
+            ax_lat,
+            ax_heading_err,
+            ax_vel,
+            ax_accel,
+            ax_steer_cmd,
+            ax_steer_meas,
+            ax_lat_jerk,
+            ax_replan_ade,
+            ax_cost,
+            ax_weight,
+            ax_cost_breakdown,
+        ) = axes
+        ax_heading = None
+    elif len(axes) >= 11:
         (
             ax_xy,
             ax_lat,
@@ -721,6 +753,7 @@ def draw_frame(axes, frame: MppiDebugFrame) -> None:
             ax_weight,
         ) = axes
         ax_heading = None
+        ax_cost_breakdown = None
     elif len(axes) >= 10:
         # Retune layout before replan-ADE panel.
         (
@@ -737,6 +770,7 @@ def draw_frame(axes, frame: MppiDebugFrame) -> None:
         ) = axes
         ax_replan_ade = None
         ax_heading = None
+        ax_cost_breakdown = None
     elif len(axes) >= 9:
         (
             ax_xy,
@@ -751,6 +785,7 @@ def draw_frame(axes, frame: MppiDebugFrame) -> None:
         ) = axes
         ax_cost = ax_weight = None
         ax_heading = None
+        ax_cost_breakdown = None
     elif len(axes) >= 8:
         (
             ax_xy,
@@ -765,6 +800,7 @@ def draw_frame(axes, frame: MppiDebugFrame) -> None:
         ax_replan_ade = None
         ax_cost = ax_weight = None
         ax_heading = None
+        ax_cost_breakdown = None
     elif len(axes) >= 7:
         (
             ax_xy,
@@ -778,10 +814,12 @@ def draw_frame(axes, frame: MppiDebugFrame) -> None:
         ax_lat_jerk = ax_replan_ade = None
         ax_cost = ax_weight = None
         ax_heading = None
+        ax_cost_breakdown = None
     else:
         # Pre path-error layout (absolute heading plot).
         ax_xy, ax_heading, ax_vel, ax_accel, ax_steer_cmd, ax_steer_meas = axes
         ax_lat = ax_heading_err = ax_cost = ax_weight = ax_lat_jerk = ax_replan_ade = None
+        ax_cost_breakdown = None
 
     lengths = [len(frame.reference_vel), len(frame.optimized_vel)]
     if frame.retuned_vel:
@@ -1392,9 +1430,11 @@ def draw_frame(axes, frame: MppiDebugFrame) -> None:
             ax_cost.text(
                 0.5,
                 0.5,
-                "Retune to populate",
+                retune_placeholder(frame),
                 ha="center",
                 va="center",
+                fontsize=8,
+                wrap=True,
                 transform=ax_cost.transAxes,
             )
 
@@ -1426,10 +1466,88 @@ def draw_frame(axes, frame: MppiDebugFrame) -> None:
             ax_weight.text(
                 0.5,
                 0.5,
-                "Retune to populate",
+                retune_placeholder(frame),
                 ha="center",
                 va="center",
+                fontsize=8,
+                wrap=True,
                 transform=ax_weight.transAxes,
+            )
+
+    if ax_cost_breakdown is not None:
+        ax_cost_breakdown.clear()
+        ax_cost_breakdown.set_title("Retuned output trajectory cost breakdown")
+        ax_cost_breakdown.set_xlabel("horizon-average cost")
+        ax_cost_breakdown.grid(True, axis="x", alpha=0.3)
+        component_labels = (
+            ("state/speed", "speed"),
+            ("state/track", "track"),
+            ("state/heading", "heading"),
+            ("state/lateral_distance", "lat distance"),
+            ("state/lateral_yaw_error", "lat yaw error"),
+            ("state/track_center", "track center"),
+            ("state/corner_buffer", "corner buffer"),
+            ("state/drivable_area", "drivable area"),
+            ("control/acceleration_command", "accel cmd"),
+            ("control/steering_command", "steer cmd"),
+            ("comfort/lateral_acceleration", "lat accel"),
+            ("comfort/lateral_jerk", "lat jerk"),
+            ("comfort/longitudinal_jerk", "long jerk"),
+            ("comfort/steering_rate", "steer rate"),
+            ("crash", "crash"),
+        )
+        components = [
+            (key, label, frame.cost_breakdown.get(key, 0.0))
+            for key, label in component_labels
+            if math.isfinite(frame.cost_breakdown.get(key, 0.0))
+            and frame.cost_breakdown.get(key, 0.0) > 0.0
+        ]
+        component_total = sum(value for _, _, value in components)
+        if components and component_total > 0.0:
+            left = 0.0
+            colors = plt.get_cmap("tab20").colors
+            for index, (_key, display_label, value) in enumerate(components):
+                percentage = 100.0 * value / component_total
+                label = f"{display_label}: {value:.4g} ({percentage:.2f}%)"
+                ax_cost_breakdown.barh(
+                    ["selected output"],
+                    [value],
+                    left=left,
+                    color=colors[index % len(colors)],
+                    label=label,
+                )
+                if percentage >= 4.0:
+                    ax_cost_breakdown.text(
+                        left + 0.5 * value,
+                        0.0,
+                        f"{percentage:.1f}%",
+                        ha="center",
+                        va="center",
+                        fontsize=8,
+                    )
+                left += value
+            output_total = frame.cost_breakdown.get("output_total_cost", component_total)
+            baseline = frame.cost_breakdown.get("controller_baseline_cost")
+            title = f"Retuned output cost breakdown — total={output_total:.6g}"
+            if baseline is not None and math.isfinite(baseline):
+                title += f", GPU baseline={baseline:.6g}, Δ={output_total - baseline:.6g}"
+            ax_cost_breakdown.set_title(title)
+            ax_cost_breakdown.legend(
+                loc="upper center",
+                bbox_to_anchor=(0.5, -0.30),
+                ncol=4,
+                fontsize=7,
+            )
+        else:
+            ax_cost_breakdown.text(
+                0.5,
+                0.5,
+                retune_placeholder(frame),
+                ha="center",
+                va="center",
+                fontsize=8,
+                wrap=True,
+                transform=ax_cost_breakdown.transAxes,
             )
 
     for ax, saved in saved_views:
@@ -1443,9 +1561,15 @@ def create_figure(*, with_retune_panel: bool = False):
 
     if with_retune_panel:
         # Third column stays empty: _build_retune_controls() places the sliders there.
-        fig = plt.figure(figsize=(15, 11))
+        fig = plt.figure(figsize=(15, 13))
         gs = gridspec.GridSpec(
-            5, 3, figure=fig, width_ratios=[1.0, 1.0, 0.85], wspace=0.30, hspace=0.55
+            6,
+            3,
+            figure=fig,
+            width_ratios=[1.0, 1.0, 0.85],
+            height_ratios=[1.0, 1.0, 1.0, 1.0, 1.0, 1.5],
+            wspace=0.30,
+            hspace=0.70,
         )
         ax_lat = fig.add_subplot(gs[0, 0])
         ax_heading_err = fig.add_subplot(gs[1, 0])
@@ -1457,6 +1581,7 @@ def create_figure(*, with_retune_panel: bool = False):
         ax_lat_jerk = fig.add_subplot(gs[2, 1])
         ax_cost = fig.add_subplot(gs[3, 1])
         ax_weight = fig.add_subplot(gs[4, 1])
+        ax_cost_breakdown = fig.add_subplot(gs[5, 0:2])
         fig.canvas.manager.set_window_title("MPPI Diagnostics + Retune")
         fig._mppi_related_figures = (trajectory_fig,)
         return fig, (
@@ -1471,6 +1596,7 @@ def create_figure(*, with_retune_panel: bool = False):
             ax_replan_ade,
             ax_cost,
             ax_weight,
+            ax_cost_breakdown,
         )
 
     fig = plt.figure(figsize=(12, 9))
@@ -1643,9 +1769,6 @@ def find_retune_binary(explicit: str = "") -> Path:
     env = os.environ.get("MPPI_OFFLINE_RETUNE")
     if env:
         return Path(env)
-    which = shutil.which("mppi_offline_retune")
-    if which:
-        return Path(which)
     try:
         prefix = subprocess.check_output(
             ["ros2", "pkg", "prefix", "autoware_mppi_optimizer"], text=True
@@ -1655,6 +1778,9 @@ def find_retune_binary(explicit: str = "") -> Path:
             return candidate
     except (subprocess.CalledProcessError, FileNotFoundError):
         pass
+    which = shutil.which("mppi_offline_retune")
+    if which:
+        return Path(which)
     raise FileNotFoundError(
         "mppi_offline_retune not found. Build autoware_mppi_optimizer and source install, "
         "or set MPPI_OFFLINE_RETUNE / --retune-bin."
@@ -2055,6 +2181,7 @@ class OfflineLogVisualizer:
                 f"steer_time_constant={self._steer_time_constant}"
             )
             print(f"Retune binary: {self._retune_bin}")
+            print(f"Retune output directory: {self._out_dir}")
             print("Move sliders, then click Retune (or press r). Sliders alone do nothing.")
             print(
                 "Re-seed (or press s) warm-starts MPPI from the current retuned u_opt "
@@ -2094,6 +2221,7 @@ class OfflineLogVisualizer:
         costs = None
         rollouts = None
         retune_crash_status = None
+        cost_breakdown = None
         if self._out_dir is not None:
             retuned = load_trajectory_csv(self._out_dir / f"{tag}_optimized.csv")
             if not retuned.x:
@@ -2105,6 +2233,7 @@ class OfflineLogVisualizer:
             if not rollouts:
                 rollouts = None
             retune_crash_status = load_crash_status_csv(self._out_dir / f"{tag}_crash_status.csv")
+            cost_breakdown = load_key_value_csv(self._out_dir / f"{tag}_cost_breakdown.csv")
         stamp = f"frame: {frame_id} / {self._frame_ids[-1]}"
         if self._enable_retune:
             stamp = f"{stamp}   |   {self._status}"
@@ -2118,6 +2247,8 @@ class OfflineLogVisualizer:
             steer_time_constant=self._steer_time_constant,
             wheel_base=self._wheel_base,
             retune_crash_status=retune_crash_status,
+            cost_breakdown=cost_breakdown,
+            retune_status=self._status,
         )
         self._fill_offline_replan_ade(frame, up_to_index=self._index)
         return frame
@@ -2225,6 +2356,14 @@ class OfflineLogVisualizer:
         track = params.get("track_coeff", float("nan"))
         mode = "Re-seeding" if reseed else "Retuning"
         prev_count = self._reseed_counts.get(frame_id, 0)
+        for suffix in (
+            "optimized.csv",
+            "costs.csv",
+            "rollouts.csv",
+            "crash_status.csv",
+            "cost_breakdown.csv",
+        ):
+            (self._out_dir / f"{tag}_{suffix}").unlink(missing_ok=True)
         self._status = (
             f"{mode} frame {frame_id} via {self._retune_bin.name} "
             f"(lambda={lam:.0f}, track={track:.0f}"
@@ -2234,6 +2373,18 @@ class OfflineLogVisualizer:
         self._show_current()
         try:
             completed = subprocess.run(cmd, check=True, capture_output=True, text=True)
+            required_outputs = (
+                self._out_dir / f"{tag}_optimized.csv",
+                self._out_dir / f"{tag}_costs.csv",
+                self._out_dir / f"{tag}_cost_breakdown.csv",
+            )
+            missing_outputs = [path.name for path in required_outputs if not path.is_file()]
+            if missing_outputs:
+                raise RuntimeError(
+                    "retune completed without expected output: "
+                    + ", ".join(missing_outputs)
+                    + f" (binary: {self._retune_bin})"
+                )
             lines = [ln for ln in completed.stdout.splitlines() if ln.strip()]
             # Prefer the applied_params line when present; else last status line.
             applied = next((ln for ln in lines if ln.startswith("applied_params ")), "")
@@ -2287,8 +2438,22 @@ class OfflineLogVisualizer:
             if warn_lines:
                 self._status = f"{self._status}  ||  {warn_lines[-1]}"
         except subprocess.CalledProcessError as exc:
-            err = (exc.stderr or exc.stdout or str(exc)).strip()
-            self._status = f"{'Re-seed' if reseed else 'Retune'} failed: {err[-240:]}"
+            details = (exc.stderr or exc.stdout or str(exc)).strip()
+            print(
+                f"[retune] command failed with exit code {exc.returncode}:\n"
+                f"{' '.join(cmd)}\n{details}",
+                file=sys.stderr,
+            )
+            detail_line = next(
+                (line.strip() for line in reversed(details.splitlines()) if line), ""
+            )
+            self._status = (
+                f"{'Re-seed' if reseed else 'Retune'} failed "
+                f"(exit {exc.returncode}): {detail_line[-180:]}"
+            )
+        except RuntimeError as exc:
+            print(f"[retune] {exc}", file=sys.stderr)
+            self._status = f"{'Re-seed' if reseed else 'Retune'} failed: {exc}"
         except FileNotFoundError as exc:
             self._status = f"{'Re-seed' if reseed else 'Retune'} failed: {exc}"
         self._show_current()

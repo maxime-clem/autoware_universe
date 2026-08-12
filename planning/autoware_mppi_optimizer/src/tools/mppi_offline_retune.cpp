@@ -579,16 +579,6 @@ int run(int argc, char ** argv)
       !nominal_csv_override.empty() ? nominal_csv_override : (log_dir + "/" + tag + "_nominal.csv");
     std::vector<float> nominal_accel;
     std::vector<float> nominal_steer;
-    if (!loadMppiDebugNominalCsv(nominal_path, nominal_accel, nominal_steer)) {
-      std::cerr << "ERROR: missing warm-start nominal control " << nominal_path
-                << "\n*_nominal.csv is the online u_nom warm-start. Re-log with a build that "
-                   "writes it, or pass --nominal-csv from a prior retune *_seed_nominal.csv.\n";
-      return 1;
-    }
-    frame_mppi.setForcedNominalControl(nominal_accel, nominal_steer);
-    if (!nominal_csv_override.empty()) {
-      std::cout << "frame " << frame_id << " seeding u_nom from " << nominal_path << "\n";
-    }
 
     float hist_a0 = 0.0F;
     float hist_s0 = 0.0F;
@@ -733,6 +723,39 @@ int run(int argc, char ** argv)
         crash_out << static_cast<int>(result.debug.validation.reasons) << ","
                   << to_string(result.debug.validation.reasons) << "\n";
       }
+    }
+
+    {
+      const auto & breakdown = result.debug.cost_breakdown;
+      const std::string breakdown_path = out_dir + "/" + tag + "_cost_breakdown.csv";
+      std::ofstream breakdown_out(breakdown_path);
+      if (!breakdown_out) {
+        std::cerr << "Failed to write " << breakdown_path << "\n";
+        return 1;
+      }
+      breakdown_out << "key,value\n";
+      breakdown_out << "controller_baseline_cost," << result.debug.baseline_cost << "\n";
+      breakdown_out << "output_total_cost," << breakdown.total << "\n";
+      breakdown_out << "output_minus_baseline_cost," << breakdown.total - result.debug.baseline_cost
+                    << "\n";
+      breakdown_out << "running_total," << breakdown.running_total << "\n";
+      breakdown_out << "terminal_total," << breakdown.terminal_total << "\n";
+      breakdown_out << "evaluated_timesteps," << breakdown.evaluated_timesteps << "\n";
+      breakdown_out << "state/speed," << breakdown.speed << "\n";
+      breakdown_out << "state/track," << breakdown.track << "\n";
+      breakdown_out << "state/heading," << breakdown.heading << "\n";
+      breakdown_out << "state/lateral_distance," << breakdown.lateral_distance << "\n";
+      breakdown_out << "state/lateral_yaw_error," << breakdown.lateral_yaw_error << "\n";
+      breakdown_out << "state/track_center," << breakdown.track_center << "\n";
+      breakdown_out << "state/corner_buffer," << breakdown.corner_buffer << "\n";
+      breakdown_out << "state/drivable_area," << breakdown.drivable_area << "\n";
+      breakdown_out << "control/acceleration_command," << breakdown.acceleration_command << "\n";
+      breakdown_out << "control/steering_command," << breakdown.steering_command << "\n";
+      breakdown_out << "comfort/lateral_acceleration," << breakdown.lateral_acceleration << "\n";
+      breakdown_out << "comfort/lateral_jerk," << breakdown.lateral_jerk << "\n";
+      breakdown_out << "comfort/longitudinal_jerk," << breakdown.longitudinal_jerk << "\n";
+      breakdown_out << "comfort/steering_rate," << breakdown.steering_rate << "\n";
+      breakdown_out << "crash," << breakdown.crash << "\n";
     }
 
     index_out << frame_id << "," << reference.header.stamp.sec << ","

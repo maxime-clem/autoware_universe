@@ -104,8 +104,9 @@ ros2 run autoware_mppi_optimizer mppi_offline_retune -- \
 
 ### Interactive compare + retune
 
-Same plots as `mppi_debug_visualizer.py` (XY, heading, velocity, accel, steer, steer-rate),
-with diffusion reference (cyan), logged MPPI (red), and retuned MPPI (green):
+Same plots as `mppi_debug_visualizer.py` (XY, heading, velocity, accel, steer, steer-rate,
+rollout cost/weight distributions, and a stacked selected-output cost breakdown), with
+diffusion reference (cyan), logged MPPI (red), and retuned MPPI (green):
 
 ```bash
 # Option A — visualizer with retune panel

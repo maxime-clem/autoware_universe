@@ -34,7 +34,7 @@
     # Optional offline debug logging for mppi_debug_visualizer.py --log-dir
     # Empty directory resolves to $XDG_CACHE_HOME/autoware/mppi_debug_log
     # (or $HOME/.cache/autoware/mppi_debug_log).
-    enable_debug_trajectory_log: false
+    enable_debug_trajectory_log: true
     debug_trajectory_log_directory: ""
 
     ignore_obstacles: false
