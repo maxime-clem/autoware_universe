@@ -144,6 +144,14 @@ TEST_F(FirstOrderDubinsMppiInterfaceGpuTest, ProducesFinitePostStepTrajectoryAnd
   EXPECT_TRUE(result.debug.optimized_trajectory == result.trajectory);
   EXPECT_TRUE(result.debug.rollouts.empty());
   EXPECT_TRUE(std::isfinite(result.debug.baseline_cost));
+  EXPECT_TRUE(std::isfinite(result.debug.cost_breakdown.total));
+  EXPECT_EQ(
+    result.debug.cost_breakdown.evaluated_timesteps,
+    static_cast<std::size_t>(detail::kMppiHorizon));
+  EXPECT_NEAR(
+    result.debug.cost_breakdown.componentTotal(), result.debug.cost_breakdown.total, 1.0E-3F);
+  // Guard host/GPU cost parity: a new GPU term must also be added to the host breakdown.
+  EXPECT_NEAR(result.debug.cost_breakdown.total, result.debug.baseline_cost, 1.0F);
   EXPECT_TRUE(result.debug.validation.isValid());
   EXPECT_FALSE(result.debug.was_rejected);
   EXPECT_EQ(result.debug.optimal_horizon.size(), static_cast<std::size_t>(detail::kMppiHorizon));
@@ -211,6 +219,10 @@ TEST_F(FirstOrderDubinsMppiInterfaceGpuTest, RejectsAtInclusiveLateralBoundaryTh
   EXPECT_TRUE(result.debug.reference_trajectory == input);
   EXPECT_TRUE(result.debug.optimized_trajectory == input);
   EXPECT_TRUE(result.debug.was_rejected);
+  EXPECT_EQ(
+    result.debug.cost_breakdown.evaluated_timesteps,
+    static_cast<std::size_t>(detail::kMppiHorizon));
+  EXPECT_TRUE(std::isfinite(result.debug.cost_breakdown.total));
   EXPECT_TRUE(hasInvalidityReason(
     result.debug.validation.reasons, FirstOrderDubinsMppiInvalidityReason::lateral_boundary));
   ASSERT_TRUE(result.debug.validation.first_invalid_index.has_value());

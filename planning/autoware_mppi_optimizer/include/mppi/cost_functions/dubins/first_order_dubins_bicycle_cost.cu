@@ -578,6 +578,104 @@ FirstOrderDubinsBicycleCostImpl<CLASS_T, NUM_TIMESTEPS, PARAMS_T, DYN_PARAMS_T>:
 }
 
 template <class CLASS_T, int NUM_TIMESTEPS, class PARAMS_T, class DYN_PARAMS_T>
+autoware::mppi_optimizer::FirstOrderDubinsMppiCostBreakdown
+FirstOrderDubinsBicycleCostImpl<CLASS_T, NUM_TIMESTEPS, PARAMS_T, DYN_PARAMS_T>::
+  computeRunningCostBreakdown(
+    const Eigen::Ref<const output_array> & y, const Eigen::Ref<const control_array> & u,
+    const int timestep, int * crash_status) const
+{
+  autoware::mppi_optimizer::FirstOrderDubinsMppiCostBreakdown result;
+  if (isCrashLatched(crash_status)) {
+    result.crash = latchedCrashCost(crash_status);
+    result.running_total = result.crash;
+    result.total = result.crash;
+    return result;
+  }
+
+  const float x_pos = y[static_cast<int>(O::BASELINK_POS_I_X)];
+  const float y_pos = y[static_cast<int>(O::BASELINK_POS_I_Y)];
+  const float yaw = y[static_cast<int>(O::YAW)];
+  const float vel = y[static_cast<int>(O::TOTAL_VELOCITY)];
+  const float vel_diff = vel - ref_v_[timestep];
+
+  result.speed = this->params_.speed_coeff * vel_diff * vel_diff;
+  result.track = this->params_.track_coeff * computeTrackValue(x_pos, y_pos, timestep);
+  result.heading = this->params_.heading_coeff * computeHeadingValue(yaw, timestep);
+  result.lateral_distance =
+    this->params_.lateral_distance_coeff * computeLateralDistanceValue(x_pos, y_pos);
+  result.lateral_yaw_error =
+    this->params_.lateral_yaw_error_coeff * computeLateralYawErrorValue(x_pos, y_pos, yaw);
+  result.track_center =
+    this->params_.track_center_coeff * computeTrackCenterValue(x_pos, y_pos, yaw, timestep);
+  result.corner_buffer = computeCornerBufferCost(x_pos, y_pos, yaw);
+  result.drivable_area = egoCrossesDrivableAreaBoundary(x_pos, y_pos, yaw)
+                           ? this->params_.drivable_area_crossing_coeff
+                           : 0.0F;
+
+  if (detectAndLatchCrash(x_pos, y_pos, yaw, timestep, crash_status)) {
+    result.crash = latchedCrashCost(crash_status);
+  } else {
+    const float accel_cmd = u(static_cast<int>(C::ACCELERATION_CMD));
+    const float steer_cmd = u(static_cast<int>(C::STEER_CMD));
+    result.acceleration_command = this->params_.accel_cmd_coeff * accel_cmd * accel_cmd;
+    result.steering_command = this->params_.steer_cmd_coeff * steer_cmd * steer_cmd;
+
+    float lateral_accel = 0.0F;
+    float lateral_jerk = 0.0F;
+    float longitudinal_jerk = 0.0F;
+    float steer_rate = 0.0F;
+    comfortTerms(
+      this->params_, u.data(), y.data(), lateral_accel, lateral_jerk, longitudinal_jerk,
+      steer_rate);
+    result.lateral_acceleration =
+      this->params_.lateral_acceleration_coeff * lateral_accel * lateral_accel;
+    result.lateral_jerk = this->params_.lateral_jerk_coeff * lateral_jerk * lateral_jerk;
+    result.longitudinal_jerk =
+      this->params_.longitudinal_jerk_coeff * longitudinal_jerk * longitudinal_jerk;
+    result.steering_rate = this->params_.steer_rate_coeff * steer_rate * steer_rate;
+  }
+
+  result.running_total = result.componentTotal();
+  result.total = result.running_total;
+  return result;
+}
+
+template <class CLASS_T, int NUM_TIMESTEPS, class PARAMS_T, class DYN_PARAMS_T>
+autoware::mppi_optimizer::FirstOrderDubinsMppiCostBreakdown FirstOrderDubinsBicycleCostImpl<
+  CLASS_T, NUM_TIMESTEPS, PARAMS_T,
+  DYN_PARAMS_T>::computeTerminalCostBreakdown(const Eigen::Ref<const output_array> & y) const
+{
+  autoware::mppi_optimizer::FirstOrderDubinsMppiCostBreakdown result;
+  constexpr int timestep = NUM_TIMESTEPS - 1;
+  const float x_pos = y[static_cast<int>(O::BASELINK_POS_I_X)];
+  const float y_pos = y[static_cast<int>(O::BASELINK_POS_I_Y)];
+  const float yaw = y[static_cast<int>(O::YAW)];
+
+  result.track = this->params_.track_coeff * computeTrackValue(x_pos, y_pos, timestep) *
+                 this->params_.track_terminal_scale;
+  result.heading = this->params_.heading_coeff * computeHeadingValue(yaw, timestep) * 10.0F;
+  result.lateral_distance =
+    this->params_.lateral_distance_coeff * computeLateralDistanceValue(x_pos, y_pos) * 10.0F;
+  result.lateral_yaw_error =
+    this->params_.lateral_yaw_error_coeff * computeLateralYawErrorValue(x_pos, y_pos, yaw) * 10.0F;
+  result.track_center = this->params_.track_center_coeff *
+                        computeTrackCenterValue(x_pos, y_pos, yaw, timestep) *
+                        this->params_.track_terminal_scale;
+  result.corner_buffer = computeCornerBufferCost(x_pos, y_pos, yaw);
+  result.drivable_area = egoCrossesDrivableAreaBoundary(x_pos, y_pos, yaw)
+                           ? this->params_.drivable_area_crossing_coeff
+                           : 0.0F;
+  int crash_status = 0;
+  if (detectAndLatchCrash(x_pos, y_pos, yaw, timestep, &crash_status)) {
+    result.crash = latchedCrashCost(&crash_status);
+  }
+
+  result.terminal_total = result.componentTotal();
+  result.total = result.terminal_total;
+  return result;
+}
+
+template <class CLASS_T, int NUM_TIMESTEPS, class PARAMS_T, class DYN_PARAMS_T>
 __device__ float
 FirstOrderDubinsBicycleCostImpl<CLASS_T, NUM_TIMESTEPS, PARAMS_T, DYN_PARAMS_T>::computeStateCost(
   float * y, int timestep, float * theta_c, int * crash_status)

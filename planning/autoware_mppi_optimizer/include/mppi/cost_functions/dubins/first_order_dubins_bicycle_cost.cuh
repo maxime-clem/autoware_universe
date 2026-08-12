@@ -164,6 +164,15 @@ public:
     const Eigen::Ref<const control_array> & u, const Eigen::Ref<const output_array> & y,
     int timestep);
 
+  /** Cost components for one host-replayed running step, with GPU-equivalent crash latching. */
+  autoware::mppi_optimizer::FirstOrderDubinsMppiCostBreakdown computeRunningCostBreakdown(
+    const Eigen::Ref<const output_array> & y, const Eigen::Ref<const control_array> & u,
+    int timestep, int * crash_status) const;
+
+  /** Cost components for the terminal output, before division by the horizon length. */
+  autoware::mppi_optimizer::FirstOrderDubinsMppiCostBreakdown computeTerminalCostBreakdown(
+    const Eigen::Ref<const output_array> & y) const;
+
   __device__ float computeComfortCost(float * u, float * y, int timestep);
 
   __device__ float terminalCost(float * y, float * theta_c);

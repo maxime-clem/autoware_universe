@@ -32,6 +32,8 @@ namespace
 constexpr int kTestHorizon = detail::kMppiHorizon;
 using TestCost = FirstOrderDubinsBicycleCost<kTestHorizon>;
 using TestCostParams = FirstOrderDubinsBicycleCostParams<kTestHorizon>;
+using OutputIndex = FirstOrderDubinsBicycleParams::OutputIndex;
+using ControlIndex = FirstOrderDubinsBicycleParams::ControlIndex;
 
 class TrajectoryValidatorTest : public ::testing::Test
 {
@@ -87,6 +89,52 @@ protected:
 
   std::unique_ptr<TestCost> cost_;
 };
+
+TEST_F(TrajectoryValidatorTest, ReportsRunningCostComponentsWithoutChangingTheirSum)
+{
+  auto params = makeParams();
+  params.desired_speed = 2.0F;
+  params.speed_coeff = 0.0F;
+  params.track_coeff = 2.0F;
+  params.track_terminal_scale = 0.0F;
+  params.heading_coeff = 0.0F;
+  params.lateral_distance_coeff = 0.0F;
+  params.lateral_yaw_error_coeff = 0.0F;
+  params.track_center_coeff = 3.0F;
+  params.corner_buffer_coeff = 0.0F;
+  params.accel_cmd_coeff = 4.0F;
+  params.steer_cmd_coeff = 0.0F;
+  params.steer_rate_coeff = 5.0F;
+  params.lateral_acceleration_coeff = 0.0F;
+  params.lateral_jerk_coeff = 0.0F;
+  params.longitudinal_jerk_coeff = 0.0F;
+  params.steer_time_constant = 0.1F;
+  params.drivable_area_crossing_coeff = 0.0F;
+  cost_->setParams(params);
+  setStraightReference();
+
+  TestCost::output_array output = TestCost::output_array::Zero();
+  output(static_cast<int>(OutputIndex::BASELINK_POS_I_X)) = 1.0F;
+  output(static_cast<int>(OutputIndex::TOTAL_VELOCITY)) = 2.0F;
+  TestCost::control_array control = TestCost::control_array::Zero();
+  control(static_cast<int>(ControlIndex::ACCELERATION_CMD)) = 2.0F;
+  control(static_cast<int>(ControlIndex::STEER_CMD)) = 0.2F;
+  int crash_status = 0;
+
+  const auto breakdown = cost_->computeRunningCostBreakdown(output, control, 0, &crash_status);
+  int direct_crash_status = 0;
+  const float direct_total = cost_->computeRunningCost(output, control, 0, &direct_crash_status);
+
+  EXPECT_FLOAT_EQ(breakdown.track, 2.0F);
+  EXPECT_NEAR(breakdown.track_center, 3.6F, 1.0E-6F);
+  EXPECT_FLOAT_EQ(breakdown.acceleration_command, 16.0F);
+  EXPECT_NEAR(breakdown.steering_rate, 20.0F, 1.0E-5F);
+  EXPECT_NEAR(breakdown.running_total, 41.6F, 1.0E-5F);
+  EXPECT_NEAR(breakdown.componentTotal(), breakdown.total, 1.0E-5F);
+  EXPECT_NEAR(breakdown.total, direct_total, 1.0E-5F);
+  EXPECT_EQ(crash_status, 0);
+  EXPECT_EQ(direct_crash_status, 0);
+}
 
 TEST_F(TrajectoryValidatorTest, AppliesBoundaryThresholdSymmetricallyAndInclusively)
 {

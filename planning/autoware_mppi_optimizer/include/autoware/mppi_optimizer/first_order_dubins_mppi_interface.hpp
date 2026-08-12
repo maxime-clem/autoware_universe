@@ -62,6 +62,37 @@ struct FirstOrderDubinsMppiRollout
   bool is_worst{false};
 };
 
+/** Host reconstruction of the cost assigned to the selected MPPI trajectory. */
+struct FirstOrderDubinsMppiCostBreakdown
+{
+  float speed{0.0F};
+  float track{0.0F};
+  float heading{0.0F};
+  float lateral_distance{0.0F};
+  float lateral_yaw_error{0.0F};
+  float track_center{0.0F};
+  float corner_buffer{0.0F};
+  float drivable_area{0.0F};
+  float acceleration_command{0.0F};
+  float steering_command{0.0F};
+  float lateral_acceleration{0.0F};
+  float lateral_jerk{0.0F};
+  float longitudinal_jerk{0.0F};
+  float steering_rate{0.0F};
+  float crash{0.0F};
+  float running_total{0.0F};
+  float terminal_total{0.0F};
+  float total{0.0F};
+  std::size_t evaluated_timesteps{0U};
+
+  [[nodiscard]] float componentTotal() const
+  {
+    return speed + track + heading + lateral_distance + lateral_yaw_error + track_center +
+           corner_buffer + drivable_area + acceleration_command + steering_command +
+           lateral_acceleration + lateral_jerk + longitudinal_jerk + steering_rate + crash;
+  }
+};
+
 enum class FirstOrderDubinsMppiInvalidityReason : std::uint8_t {
   none = 0U,
   lateral_boundary = 1U << 0U,
@@ -69,7 +100,7 @@ enum class FirstOrderDubinsMppiInvalidityReason : std::uint8_t {
   road_border = 1U << 2U,
 };
 
-std::string to_string(FirstOrderDubinsMppiInvalidityReason reason)
+inline std::string to_string(FirstOrderDubinsMppiInvalidityReason reason)
 {
   if (reason == FirstOrderDubinsMppiInvalidityReason::none) {
     return "none";
@@ -131,6 +162,7 @@ struct FirstOrderDubinsMppiDebug
   Trajectory optimized_trajectory;
   std::vector<std::pair<float, float>> optimal_horizon;
   std::vector<FirstOrderDubinsMppiRollout> rollouts;
+  FirstOrderDubinsMppiCostBreakdown cost_breakdown;
   float baseline_cost{0.0F};
   /** Hard-constraint validation of the generated post-step states. */
   FirstOrderDubinsMppiValidationResult validation;

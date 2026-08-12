@@ -147,6 +147,7 @@ DiffusionPlanner::DiffusionPlanner(const rclcpp::NodeOptions & options)
       this, "diffusion_planner");
 
   diagnostics_inference_ = std::make_unique<DiagnosticsInterface>(this, "inference_status");
+  diagnostics_mppi_cost_ = std::make_unique<DiagnosticsInterface>(this, "mppi_cost_breakdown");
   try {
     load_model();
     if (params_.build_only) {
@@ -704,6 +705,7 @@ void DiffusionPlanner::on_timer()
         planner_output.trajectory = mppi_result.trajectory;
       }
       publish_mppi_enabled(apply_mppi);
+      publish_mppi_cost_diagnostics(mppi_result.debug, apply_mppi, frame_time);
 
       autoware_utils_debug::ScopedTimeTrack publish_debug_st(
         "mppi_optimizer/publish_debug", *time_keeper_);
@@ -805,6 +807,59 @@ void DiffusionPlanner::publish_mppi_debug(
 
   pub_mppi_reference_trajectory_->publish(reference);
   pub_mppi_optimized_trajectory_->publish(optimized);
+}
+
+void DiffusionPlanner::publish_mppi_cost_diagnostics(
+  const autoware::mppi_optimizer::FirstOrderDubinsMppiDebug & debug, const bool was_applied,
+  const rclcpp::Time & stamp)
+{
+  diagnostics_mppi_cost_->clear();
+  const auto & cost = debug.cost_breakdown;
+  diagnostics_mppi_cost_->add_key_value("controller_baseline_cost", debug.baseline_cost);
+  diagnostics_mppi_cost_->add_key_value("output_total_cost", cost.total);
+  diagnostics_mppi_cost_->add_key_value(
+    "output_minus_baseline_cost", cost.total - debug.baseline_cost);
+  diagnostics_mppi_cost_->add_key_value("running_total", cost.running_total);
+  diagnostics_mppi_cost_->add_key_value("terminal_total", cost.terminal_total);
+  diagnostics_mppi_cost_->add_key_value("evaluated_timesteps", cost.evaluated_timesteps);
+  diagnostics_mppi_cost_->add_key_value("state/speed", cost.speed);
+  diagnostics_mppi_cost_->add_key_value("state/track", cost.track);
+  diagnostics_mppi_cost_->add_key_value("state/heading", cost.heading);
+  diagnostics_mppi_cost_->add_key_value("state/lateral_distance", cost.lateral_distance);
+  diagnostics_mppi_cost_->add_key_value("state/lateral_yaw_error", cost.lateral_yaw_error);
+  diagnostics_mppi_cost_->add_key_value("state/track_center", cost.track_center);
+  diagnostics_mppi_cost_->add_key_value("state/corner_buffer", cost.corner_buffer);
+  diagnostics_mppi_cost_->add_key_value("state/drivable_area", cost.drivable_area);
+  diagnostics_mppi_cost_->add_key_value("control/acceleration_command", cost.acceleration_command);
+  diagnostics_mppi_cost_->add_key_value("control/steering_command", cost.steering_command);
+  diagnostics_mppi_cost_->add_key_value("comfort/lateral_acceleration", cost.lateral_acceleration);
+  diagnostics_mppi_cost_->add_key_value("comfort/lateral_jerk", cost.lateral_jerk);
+  diagnostics_mppi_cost_->add_key_value("comfort/longitudinal_jerk", cost.longitudinal_jerk);
+  diagnostics_mppi_cost_->add_key_value("comfort/steering_rate", cost.steering_rate);
+  diagnostics_mppi_cost_->add_key_value("crash", cost.crash);
+  diagnostics_mppi_cost_->add_key_value(
+    "validation_reason", autoware::mppi_optimizer::to_string(debug.validation.reasons));
+  diagnostics_mppi_cost_->add_key_value(
+    "first_invalid_index", debug.validation.first_invalid_index
+                             ? std::to_string(debug.validation.first_invalid_index.value())
+                             : std::string{"none"});
+  diagnostics_mppi_cost_->add_key_value("was_rejected", debug.was_rejected);
+  diagnostics_mppi_cost_->add_key_value("was_applied", was_applied);
+
+  if (cost.evaluated_timesteps == 0U) {
+    diagnostics_mppi_cost_->update_level_and_message(
+      DiagnosticStatus::STALE, "MPPI optimization skipped");
+  } else if (!std::isfinite(cost.total) || !std::isfinite(debug.baseline_cost)) {
+    diagnostics_mppi_cost_->update_level_and_message(
+      DiagnosticStatus::ERROR, "Non-finite MPPI cost");
+  } else if (debug.was_rejected) {
+    diagnostics_mppi_cost_->update_level_and_message(
+      DiagnosticStatus::WARN, "MPPI trajectory rejected");
+  } else {
+    diagnostics_mppi_cost_->update_level_and_message(
+      DiagnosticStatus::OK, was_applied ? "MPPI trajectory applied" : "MPPI shadow output");
+  }
+  diagnostics_mppi_cost_->publish(stamp);
 }
 
 void DiffusionPlanner::publish_planning_factor(const Trajectory & trajectory)

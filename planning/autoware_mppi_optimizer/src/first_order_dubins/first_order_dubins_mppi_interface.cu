@@ -82,6 +82,75 @@ using SAMPLER = mppi::sampling_distributions::GaussianDistribution<DYN::DYN_PARA
 #endif
 
 using Mppi = VanillaMPPIController<DYN, COST, FB, kMppiHorizon, kNumRollouts, SAMPLER>;
+using CostBreakdown = FirstOrderDubinsMppiCostBreakdown;
+
+constexpr std::array<float CostBreakdown::*, 18> kCostBreakdownFields = {
+  &CostBreakdown::speed,
+  &CostBreakdown::track,
+  &CostBreakdown::heading,
+  &CostBreakdown::lateral_distance,
+  &CostBreakdown::lateral_yaw_error,
+  &CostBreakdown::track_center,
+  &CostBreakdown::corner_buffer,
+  &CostBreakdown::drivable_area,
+  &CostBreakdown::acceleration_command,
+  &CostBreakdown::steering_command,
+  &CostBreakdown::lateral_acceleration,
+  &CostBreakdown::lateral_jerk,
+  &CostBreakdown::longitudinal_jerk,
+  &CostBreakdown::steering_rate,
+  &CostBreakdown::crash,
+  &CostBreakdown::running_total,
+  &CostBreakdown::terminal_total,
+  &CostBreakdown::total,
+};
+
+void accumulateCostBreakdown(CostBreakdown & total, const CostBreakdown & value)
+{
+  for (const auto field : kCostBreakdownFields) {
+    total.*field += value.*field;
+  }
+}
+
+void scaleCostBreakdown(CostBreakdown & breakdown, const float scale)
+{
+  for (const auto field : kCostBreakdownFields) {
+    breakdown.*field *= scale;
+  }
+}
+
+CostBreakdown reconstructSelectedTrajectoryCost(
+  const COST & cost, DYN & model, const Mppi::state_trajectory & states,
+  const Mppi::control_trajectory & controls, const DYN::state_array & final_state)
+{
+  CostBreakdown result;
+  const int horizon =
+    std::min({kMppiHorizon, static_cast<int>(states.cols()), static_cast<int>(controls.cols())});
+  if (horizon <= 0) {
+    return result;
+  }
+
+  int crash_status = 0;
+  DYN::output_array output = DYN::output_array::Zero();
+  for (int timestep = 0; timestep < horizon; ++timestep) {
+    DYN::state_array state = final_state;
+    if (timestep + 1 < states.cols()) {
+      state = states.col(timestep + 1);
+    }
+    model.stateToOutput(state, output);
+    accumulateCostBreakdown(
+      result,
+      cost.computeRunningCostBreakdown(output, controls.col(timestep), timestep, &crash_status));
+  }
+
+  model.stateToOutput(final_state, output);
+  accumulateCostBreakdown(result, cost.computeTerminalCostBreakdown(output));
+
+  // MPPI-Generic stores the horizon-average of both running and terminal costs.
+  scaleCostBreakdown(result, 1.0F / static_cast<float>(horizon));
+  result.evaluated_timesteps = static_cast<std::size_t>(horizon);
+  return result;
+}
 
 /** Expose vendor Savitzky–Golay control_history_ for offline retune parity. */
 class MppiWithHistoryAccess : public Mppi
@@ -1319,6 +1388,10 @@ FirstOrderDubinsMppiOptimizationResult FirstOrderDubinsMppiInterface::optimizeTr
     result.debug.baseline_cost = impl_->controller->getBaselineCost();
     result.debug.rollouts.clear();
   }
+  if (have_final_state) {
+    result.debug.cost_breakdown = reconstructSelectedTrajectoryCost(
+      impl_->cost, impl_->model, state_trajectory, u_opt_traj, x_final);
+  }
 
   MppiDebugEgoState ego;
   ego.x = odometry.pose.pose.position.x;
@@ -1352,12 +1425,12 @@ FirstOrderDubinsMppiOptimizationResult FirstOrderDubinsMppiInterface::optimizeTr
     "MPPI tracked diffusion ref in %.1f ms: start_idx=%zu steps=%d output points size=%zu "
     "points=%zu rollouts=%zu "
     "obstacles=%zu road_borders=%zu drivable_segments=%zu u_accel=%.3f u_steer=%.3f "
-    "baseline_cost=%.2f crash_status=%s max_pos_err=%.3f m "
+    "baseline_cost=%.2f host_output_cost=%.2f crash_status=%s max_pos_err=%.3f m "
     "max_vel_err=%.3f m/s",
     elapsed_ms, impl_->tracking_start_idx, impl_->step_count, output.points.size(), num_points,
     result.debug.rollouts.size(), tracked_objects.objects.size(), road_borders.size(),
     drivable_area.size(), control.accel_cmd, control.steer_cmd, result.debug.baseline_cost,
-    validation_reasons.c_str(), max_pos_delta, max_vel_delta);
+    result.debug.cost_breakdown.total, validation_reasons.c_str(), max_pos_delta, max_vel_delta);
 
   if (impl_->skip_if_invalid && !validation.isValid()) {
     result.trajectory = input;

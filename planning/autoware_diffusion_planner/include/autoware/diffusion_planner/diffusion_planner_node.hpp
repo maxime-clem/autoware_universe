@@ -180,6 +180,11 @@ private:
     const autoware::mppi_optimizer::FirstOrderDubinsMppiDebug & debug, const std::string & frame_id,
     const rclcpp::Time & stamp);
 
+  /** Publish the selected MPPI trajectory's reconstructed cost components to /diagnostics. */
+  void publish_mppi_cost_diagnostics(
+    const autoware::mppi_optimizer::FirstOrderDubinsMppiDebug & debug, bool was_applied,
+    const rclcpp::Time & stamp);
+
   /** Publish whether MPPI is currently applied to the output trajectory. */
   void publish_mppi_enabled(bool enabled);
 
@@ -276,6 +281,7 @@ private:
   VehicleInfo vehicle_info_;
 
   std::unique_ptr<DiagnosticsInterface> diagnostics_inference_;
+  std::unique_ptr<DiagnosticsInterface> diagnostics_mppi_cost_;
   std::shared_ptr<const lanelet::LaneletMap> lanelet_map_ptr_{nullptr};
 
   std::unique_ptr<autoware_utils_system::StopWatch<std::chrono::milliseconds>> stop_watch_ptr_;
