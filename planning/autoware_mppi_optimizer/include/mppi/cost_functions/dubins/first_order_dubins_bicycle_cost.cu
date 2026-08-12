@@ -460,13 +460,15 @@ __host__ __device__ float FirstOrderDubinsBicycleCostImpl<
 
   const float half_length = this->params_.ego_length * 0.5F;
   const float half_width = this->params_.ego_width * 0.5F;
+
+  float sin_yaw, cos_yaw;
 #ifdef __CUDA_ARCH__
-  const float cos_yaw = cosf(yaw);
-  const float sin_yaw = sinf(yaw);
+  __sincosf(yaw, &sin_yaw, &cos_yaw);
 #else
-  const float cos_yaw = std::cos(yaw);
-  const float sin_yaw = std::sin(yaw);
+  cos_yaw = std::cos(yaw);
+  sin_yaw = std::sin(yaw);
 #endif
+
   const float center_x = x + this->params_.ego_axle_to_box_center * cos_yaw;
   const float center_y = y + this->params_.ego_axle_to_box_center * sin_yaw;
 
@@ -477,26 +479,27 @@ __host__ __device__ float FirstOrderDubinsBicycleCostImpl<
 
   const float margin = this->params_.corner_safe_margin;
   float total_cost = 0.0F;
+
+#pragma unroll
   for (int corner = 0; corner < 4; ++corner) {
     float min_distance = 1.0E8F;
+
     for (int segment = 0; segment < num_drivable_area_segments_; ++segment) {
       const float distance = distancePointToSegment(
         corners_x[corner], corners_y[corner], drivable_area_x0_[segment],
         drivable_area_y0_[segment], drivable_area_x1_[segment], drivable_area_y1_[segment]);
+
 #ifdef __CUDA_ARCH__
       min_distance = fminf(min_distance, distance);
 #else
       min_distance = std::min(min_distance, distance);
 #endif
     }
-    if (min_distance < margin) {
-      const float violation = margin - min_distance;
-      total_cost += violation * violation;
-    }
+
+    const float violation = fmaxf(0.0F, margin - min_distance);
+    total_cost += violation * violation;
   }
 
-  // distancePointToSegment is unsigned. Boundary crossings remain covered separately by
-  // drivable_area_crossing_coeff.
   return this->params_.corner_buffer_coeff * total_cost;
 }
 
