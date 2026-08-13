@@ -809,7 +809,7 @@ struct FirstOrderDubinsMppiInterface::Impl
     const int steer_idx = static_cast<int>(FirstOrderDubinsBicycleParams::ControlIndex::STEER_CMD);
     const auto nominal = detail::buildDiffusionNominalControl(
       reference, start_idx, vehicle_params, kMppiHorizon,
-      user_cost_params_.nominal_curvature_min_chord_length_m);
+      user_cost_params_.nominal_spline_smoothing_weight);
     for (int t = 0; t < kMppiHorizon; ++t) {
       u_nom(accel_idx, t) = nominal[static_cast<size_t>(t)].accel_cmd;
       u_nom(steer_idx, t) = nominal[static_cast<size_t>(t)].steer_cmd;
@@ -842,26 +842,34 @@ struct FirstOrderDubinsMppiInterface::Impl
     }
   }
 
+  void makeFirstNominalSteeringReachable(const float current_steering)
+  {
+    const int steer_idx = static_cast<int>(FirstOrderDubinsBicycleParams::ControlIndex::STEER_CMD);
+    u_nom(steer_idx, 0) = detail::clampSteeringToReachableRange(
+      u_nom(steer_idx, 0), current_steering, vehicle_params.steer_rate_lim, kDt,
+      vehicle_params.max_steer_angle);
+  }
+
   void seedNominalControl(
-    const Trajectory & reference, const size_t start_idx, const float ego_velocity)
+    const Trajectory & reference, const size_t start_idx, const float ego_velocity,
+    const float ego_steering)
   {
     if (forced_nominal_pending) {
       seedNominalControlFromForced();
       forced_nominal_pending = false;
-      snapshotNominalForLog();
-      return;
+    } else {
+      // After a tracking reset, step_count is 0 and u_opt was cleared — fall back to DP seed.
+      // Also reseed from the diffusion reference when departing from a stop: shifted last u_opt
+      // is usually near-zero / braking and is a poor engage warm-start.
+      constexpr float kStoppedVelocityMps = 0.05F;
+      const bool started_from_stop = std::abs(ego_velocity) < kStoppedVelocityMps;
+      if (use_last_control_as_nominal && step_count > 0 && !started_from_stop) {
+        seedNominalControlFromLastOptimized();
+      } else {
+        seedNominalControlFromDiffusionReference(reference, start_idx);
+      }
     }
-    // After a tracking reset, step_count is 0 and u_opt was cleared — fall back to DP seed.
-    // Also reseed from the diffusion reference when departing from a stop: shifted last u_opt
-    // is usually near-zero / braking and is a poor engage warm-start.
-    constexpr float kStoppedVelocityMps = 0.05F;
-    const bool started_from_stop = std::abs(ego_velocity) < kStoppedVelocityMps;
-    if (use_last_control_as_nominal && step_count > 0 && !started_from_stop) {
-      seedNominalControlFromLastOptimized();
-      snapshotNominalForLog();
-      return;
-    }
-    seedNominalControlFromDiffusionReference(reference, start_idx);
+    makeFirstNominalSteeringReachable(ego_steering);
     snapshotNominalForLog();
   }
 
@@ -910,7 +918,8 @@ struct FirstOrderDubinsMppiInterface::Impl
 
     const auto initial_state =
       detail::makeInitialState(odometry, acceleration, steering_status, vehicle_params);
-    seedNominalControl(reference, tracking_start_idx, initial_state.velocity);
+    seedNominalControl(
+      reference, tracking_start_idx, initial_state.velocity, initial_state.steering);
 
     x = model.getZeroState();
     x(static_cast<int>(FirstOrderDubinsBicycleParams::StateIndex::POS_X)) = initial_state.x;
@@ -1429,8 +1438,8 @@ FirstOrderDubinsMppiOptimizationResult FirstOrderDubinsMppiInterface::optimizeTr
     result.debug.rollouts.clear();
   }
   if (n_state > 0 && n_ctrl > 0) {
-    result.debug.cost_breakdown = reconstructSelectedTrajectoryCost(
-      impl_->cost, impl_->model, state_trajectory, u_opt_traj);
+    result.debug.cost_breakdown =
+      reconstructSelectedTrajectoryCost(impl_->cost, impl_->model, state_trajectory, u_opt_traj);
   }
 
   MppiDebugEgoState ego;

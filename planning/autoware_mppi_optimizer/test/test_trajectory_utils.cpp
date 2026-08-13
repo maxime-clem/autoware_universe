@@ -60,14 +60,6 @@ Trajectory makeTrajectory(const std::size_t point_count, const double spacing, c
   return trajectory;
 }
 
-void appendPosition(Trajectory & trajectory, const double x, const double y)
-{
-  autoware_planning_msgs::msg::TrajectoryPoint point;
-  point.pose.position.x = x;
-  point.pose.position.y = y;
-  trajectory.points.push_back(point);
-}
-
 TEST(TrajectoryEligibility, SkipsOnlyTrajectoriesThatAreBothShortAndStopping)
 {
   auto short_stopping = makeTrajectory(3U, 1.0, 1.0F);
@@ -151,10 +143,9 @@ TEST(ReferenceHorizon, EmptyInputHoldsTheMeasuredEgoState)
 
 TEST(NominalControl, CopiesClampsPadsAndDerivesSteeringFromCurvature)
 {
-  // 1. Create a 3-point trajectory so Menger curvature can evaluate 3 non-collinear points
   auto trajectory = makeTrajectory(3U, 2.0, 2.0F);
   trajectory.points[0].acceleration_mps2 = 20.0F;
-  trajectory.points[0].front_wheel_angle_rad = 0.0F;  // Zero -> triggers Menger curvature fallback
+  trajectory.points[0].front_wheel_angle_rad = 0.0F;
   trajectory.points[0].pose.orientation = makeQuaternion(0.0);
 
   trajectory.points[1].acceleration_mps2 = -20.0F;
@@ -175,10 +166,13 @@ TEST(NominalControl, CopiesClampsPadsAndDerivesSteeringFromCurvature)
   ASSERT_EQ(nominal.size(), 4U);
   EXPECT_FLOAT_EQ(nominal[0].accel_cmd, vehicle.max_accel());
 
-  // 2. Compute expected Menger curvature for the 3 points in makeTrajectory(3U, 2.0, ...)
-  // Points are: p0=(0, 0), p1=(2.0, -0.5), p2=(4.0, -1.0) -> Note: collinear if y is linear!
-  // To test curvature, let's make p1 slightly offset so it has real curvature:
-  const float expected_curvature = computeMengerCurvatureWithMinChord(trajectory.points, 0U, 1.5);
+  std::vector<double> x;
+  std::vector<double> y;
+  for (const auto & point : trajectory.points) {
+    x.push_back(point.pose.position.x);
+    y.push_back(point.pose.position.y);
+  }
+  const float expected_curvature = computeSmoothedSplineCurvature(x, y, 10.0F).front();
   EXPECT_NEAR(nominal[0].steer_cmd, std::atan(vehicle.wheel_base * expected_curvature), 1.0E-6F);
 
   EXPECT_FLOAT_EQ(nominal[1].accel_cmd, vehicle.min_accel());
@@ -187,88 +181,81 @@ TEST(NominalControl, CopiesClampsPadsAndDerivesSteeringFromCurvature)
   EXPECT_FLOAT_EQ(nominal[3].steer_cmd, nominal[1].steer_cmd);
 }
 
-TEST(MengerCurvature, CollinearPointsHaveZeroCurvatureWithVariableSpacing)
+TEST(SmoothedSplineCurvature, CollinearPointsHaveZeroCurvatureWithVariableSpacing)
 {
-  Trajectory trajectory;
-  for (const double x : {0.0, 0.1, 0.4, 2.0, 2.1, 4.0}) {
-    appendPosition(trajectory, x, 0.0);
-  }
+  const std::vector<double> x = {0.0, 0.1, 0.4, 2.0, 2.1, 4.0};
+  const std::vector<double> y(x.size(), 0.0);
 
-  for (std::size_t i = 0; i < trajectory.points.size(); ++i) {
-    EXPECT_FLOAT_EQ(computeMengerCurvatureWithMinChord(trajectory.points, i, 1.5F), 0.0F);
+  const auto curvatures = computeSmoothedSplineCurvature(x, y, 10.0F);
+  ASSERT_EQ(curvatures.size(), x.size());
+  for (const float curvature : curvatures) {
+    EXPECT_NEAR(curvature, 0.0F, 1.0E-6F);
   }
 }
 
-TEST(MengerCurvature, DenseCircleMatchesInverseRadius)
+TEST(SmoothedSplineCurvature, PreservesQuantizedCircleWithoutCurvatureSpikes)
 {
   constexpr double radius = 10.0;
-  constexpr double arc_spacing = 0.1;
-  constexpr std::size_t point_count = 80U;
-  Trajectory trajectory;
+  constexpr double angular_step = 0.08;
+  constexpr double quantization = 0.02;
+  constexpr std::size_t point_count = 60U;
+  std::vector<double> x;
+  std::vector<double> y;
+  x.reserve(point_count);
+  y.reserve(point_count);
   for (std::size_t i = 0; i < point_count; ++i) {
-    const double angle = static_cast<double>(i) * arc_spacing / radius;
-    appendPosition(trajectory, radius * std::cos(angle), radius * std::sin(angle));
+    const double angle = static_cast<double>(i) * angular_step;
+    x.push_back(std::round(radius * std::cos(angle) / quantization) * quantization);
+    y.push_back(std::round(radius * std::sin(angle) / quantization) * quantization);
   }
 
-  const float curvature = computeMengerCurvatureWithMinChord(trajectory.points, 20U, 1.5F);
-  EXPECT_NEAR(curvature, 1.0 / radius, 0.001);
+  const auto curvatures = computeSmoothedSplineCurvature(x, y, 10.0F);
+  ASSERT_EQ(curvatures.size(), point_count);
+  EXPECT_NEAR(curvatures.front(), 1.0 / radius, 0.08);
+  EXPECT_NEAR(curvatures.back(), 1.0 / radius, 0.08);
+  for (std::size_t i = 3U; i + 3U < curvatures.size(); ++i) {
+    EXPECT_NEAR(curvatures[i], 1.0 / radius, 0.05);
+    EXPECT_LT(std::abs(curvatures[i]), 0.2F);
+  }
 }
 
-TEST(MengerCurvature, DistanceWindowAttenuatesDenseLateralJitter)
+TEST(SmoothedSplineCurvature, RoughnessPenaltyAttenuatesWaypointQuantization)
 {
-  Trajectory trajectory;
+  std::vector<double> x;
+  std::vector<double> y;
   for (std::size_t i = 0; i < 80U; ++i) {
-    const double y = i % 2U == 0U ? -0.05 : 0.05;
-    appendPosition(trajectory, 0.1 * static_cast<double>(i), y);
+    x.push_back(0.1 * static_cast<double>(i));
+    y.push_back(i % 2U == 0U ? -0.05 : 0.05);
   }
 
-  float adjacent_peak = 0.0F;
-  float windowed_peak = 0.0F;
-  for (std::size_t i = 1U; i + 1U < trajectory.points.size(); ++i) {
-    adjacent_peak = std::max(
-      adjacent_peak, std::abs(computeMengerCurvatureWithMinChord(trajectory.points, i, 0.0F)));
-    windowed_peak = std::max(
-      windowed_peak, std::abs(computeMengerCurvatureWithMinChord(trajectory.points, i, 1.5F)));
+  const auto interpolated = computeSmoothedSplineCurvature(x, y, 0.0F);
+  const auto smoothed = computeSmoothedSplineCurvature(x, y, 10.0F);
+  float interpolated_peak = 0.0F;
+  float smoothed_peak = 0.0F;
+  for (std::size_t i = 2U; i + 2U < x.size(); ++i) {
+    interpolated_peak = std::max(interpolated_peak, std::abs(interpolated[i]));
+    smoothed_peak = std::max(smoothed_peak, std::abs(smoothed[i]));
   }
-
-  EXPECT_LT(windowed_peak, adjacent_peak);
+  EXPECT_LT(smoothed_peak, 0.1F * interpolated_peak);
 }
 
-TEST(MengerCurvature, EndpointsAndNearEndpointsRemainFinite)
+TEST(SmoothedSplineCurvature, RepeatedPointsRemainFiniteAndPreserveOutputSize)
 {
-  Trajectory trajectory;
-  for (std::size_t i = 0; i < 20U; ++i) {
-    appendPosition(
-      trajectory, 0.1 * static_cast<double>(i), 0.05 * std::sin(static_cast<double>(i)));
-  }
+  const std::vector<double> x = {0.0, 1.0, 1.0, 2.0, 3.0, 3.0};
+  const std::vector<double> y = {0.0, 0.0, 0.0, 0.2, 0.6, 0.6};
 
-  const std::vector<std::size_t> indices = {
-    0U, 1U, trajectory.points.size() - 2U, trajectory.points.size() - 1U};
-  for (const std::size_t i : indices) {
-    EXPECT_TRUE(std::isfinite(computeMengerCurvatureWithMinChord(trajectory.points, i, 1.5F)));
+  const auto curvatures = computeSmoothedSplineCurvature(x, y, 10.0F);
+  ASSERT_EQ(curvatures.size(), x.size());
+  for (const float curvature : curvatures) {
+    EXPECT_TRUE(std::isfinite(curvature));
   }
 }
 
-TEST(NominalControl, CurvatureChordParameterSmoothsColdStartSteeringSeed)
+TEST(NominalControl, FirstSteeringIsReachableFromMeasuredSteering)
 {
-  Trajectory trajectory;
-  for (std::size_t i = 0; i < 80U; ++i) {
-    const double y = i % 2U == 0U ? -0.05 : 0.05;
-    appendPosition(trajectory, 0.1 * static_cast<double>(i), y);
-  }
-
-  FirstOrderDubinsMppiVehicleParams vehicle;
-  vehicle.wheel_base = 4.76F;
-  vehicle.max_steer_angle = 1.5F;
-  const auto adjacent = buildDiffusionNominalControl(trajectory, 20U, vehicle, 30, 0.0F);
-  const auto windowed = buildDiffusionNominalControl(trajectory, 20U, vehicle, 30, 1.5F);
-  float adjacent_peak = 0.0F;
-  float windowed_peak = 0.0F;
-  for (std::size_t i = 0; i < adjacent.size(); ++i) {
-    adjacent_peak = std::max(adjacent_peak, std::abs(adjacent[i].steer_cmd));
-    windowed_peak = std::max(windowed_peak, std::abs(windowed[i].steer_cmd));
-  }
-  EXPECT_LT(windowed_peak, adjacent_peak);
+  EXPECT_NEAR(clampSteeringToReachableRange(0.8F, 0.1F, 1.0F, 0.1F, 0.5F), 0.2F, 1.0E-6F);
+  EXPECT_NEAR(clampSteeringToReachableRange(-0.8F, 0.1F, 1.0F, 0.1F, 0.5F), 0.0F, 1.0E-6F);
+  EXPECT_NEAR(clampSteeringToReachableRange(0.15F, 0.1F, 1.0F, 0.1F, 0.5F), 0.15F, 1.0E-6F);
 }
 
 TEST(NominalControl, ForcedControlPadsClampsAndShiftHoldsTheTerminalCommand)

@@ -161,8 +161,8 @@ void applyCostParam(
     params.steer_cmd_coeff = value;
   } else if (key == "steer_rate_coeff") {
     params.steer_rate_coeff = value;
-  } else if (key == "nominal_curvature_min_chord_length_m") {
-    params.nominal_curvature_min_chord_length_m = value;
+  } else if (key == "nominal_spline_smoothing_weight") {
+    params.nominal_spline_smoothing_weight = value;
   } else if (key == "lateral_acceleration_coeff") {
     params.lateral_acceleration_coeff = value;
   } else if (key == "lateral_jerk_coeff") {
@@ -609,8 +609,8 @@ int run(int argc, char ** argv)
       }
     } else {
       std::cout << "frame " << frame_id
-                << " reseeding u_nom from reference with nominal curvature chord "
-                << cost_params.nominal_curvature_min_chord_length_m << " m\n";
+                << " reseeding u_nom from smoothed spline curvature (weight="
+                << cost_params.nominal_spline_smoothing_weight << ")\n";
     }
 
     {

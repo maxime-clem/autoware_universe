@@ -27,8 +27,8 @@
     steer_rate_coeff: 100000.0
     obstacle_collision_margin: 0.2
     road_border_collision_margin: 0.3
-    # Spatial window for Menger curvature when cold-starting nominal steering.
-    nominal_curvature_min_chord_length_m: 1.5
+    # Penalized-spline roughness weight for cold-start nominal steering (0 = interpolation).
+    nominal_spline_smoothing_weight: 10.0
     drivable_area_crossing_coeff: 100.0
 
     # Optional offline debug logging for mppi_debug_visualizer.py --log-dir

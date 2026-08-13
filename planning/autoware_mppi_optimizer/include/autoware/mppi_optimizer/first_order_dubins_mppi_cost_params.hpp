@@ -38,8 +38,8 @@ struct FirstOrderDubinsMppiCostParams
   float accel_cmd_coeff{0.0F};
   float steer_cmd_coeff{0.0F};
   float steer_rate_coeff{0.0F};
-  /** Spatial window used only when deriving a cold-start nominal steer from the reference. */
-  float nominal_curvature_min_chord_length_m{1.5F};
+  /** Roughness penalty used when smoothing the cold-start reference before curvature fitting. */
+  float nominal_spline_smoothing_weight{10.0F};
   float lateral_acceleration_coeff{300.0F};
   float lateral_jerk_coeff{300.0F};
   float longitudinal_jerk_coeff{10.0F};

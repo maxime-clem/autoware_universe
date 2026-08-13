@@ -14,6 +14,10 @@
 
 #include "autoware/mppi_optimizer/detail/trajectory_utils.hpp"
 
+#include <Eigen/Cholesky>
+#include <Eigen/Core>
+#include <autoware/interpolation/spline_interpolation.hpp>
+
 #include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
 
 #include <tf2/LinearMath/Quaternion.h>
@@ -34,6 +38,16 @@ geometry_msgs::msg::Quaternion quaternionFromYaw(const float yaw)
   tf2::Quaternion quaternion;
   quaternion.setRPY(0.0, 0.0, yaw);
   return tf2::toMsg(quaternion);
+}
+
+double evaluateQuadraticThroughPoints(
+  const double query, const double s0, const double value0, const double s1, const double value1,
+  const double s2, const double value2)
+{
+  const double basis0 = (query - s1) * (query - s2) / ((s0 - s1) * (s0 - s2));
+  const double basis1 = (query - s0) * (query - s2) / ((s1 - s0) * (s1 - s2));
+  const double basis2 = (query - s0) * (query - s1) / ((s2 - s0) * (s2 - s1));
+  return basis0 * value0 + basis1 * value1 + basis2 * value2;
 }
 
 }  // namespace
@@ -112,8 +126,7 @@ std::vector<ReferenceSample> buildReferenceHorizon(
     auto & sample = reference[k];
     sample.time = static_cast<float>(k + 1U) * dt;
 
-    const std::size_t source_idx =
-      std::min(k + start_idx, trajectory.points.size() - 1U);
+    const std::size_t source_idx = std::min(k + start_idx, trajectory.points.size() - 1U);
     const auto & point = trajectory.points[source_idx];
 
     sample.x = static_cast<float>(point.pose.position.x);
@@ -124,70 +137,144 @@ std::vector<ReferenceSample> buildReferenceHorizon(
   return reference;
 }
 
-float computeMengerCurvatureWithMinChord(
-  const std::vector<autoware_planning_msgs::msg::TrajectoryPoint> & points,
-  const std::size_t target_idx, const float min_chord_length_m) noexcept
+std::vector<float> computeSmoothedSplineCurvature(
+  const std::vector<double> & x, const std::vector<double> & y, const float smoothing_weight)
 {
-  constexpr double kSideLengthEpsilon = 1.0E-4;
-  constexpr double kMinimumDenominator = 1.0E-8;
-  if (points.size() < 3U || target_idx >= points.size()) {
-    return 0.0F;
+  std::vector<float> curvatures(x.size(), 0.0F);
+  if (x.size() != y.size() || x.size() < 3U) {
+    return curvatures;
+  }
+  if (!std::isfinite(x.front()) || !std::isfinite(y.front())) {
+    return curvatures;
   }
 
-  const double minimum_chord = std::max(0.0, static_cast<double>(min_chord_length_m));
-  const auto & center = points[target_idx].pose.position;
-  const auto distance_from_center = [&center](const auto & point) {
-    return std::hypot(point.pose.position.x - center.x, point.pose.position.y - center.y);
-  };
-
-  std::size_t backward_idx = 0U;
-  for (std::size_t candidate = target_idx; candidate > 0U; --candidate) {
-    const std::size_t index = candidate - 1U;
-    if (distance_from_center(points[index]) >= minimum_chord) {
-      backward_idx = index;
-      break;
+  constexpr double kMinimumKnotDistance = 1.0E-6;
+  std::vector<double> knots{0.0};
+  std::vector<double> compact_x;
+  std::vector<double> compact_y;
+  compact_x.reserve(x.size());
+  compact_y.reserve(y.size());
+  compact_x.push_back(x.front());
+  compact_y.push_back(y.front());
+  std::vector<double> query_s(x.size(), 0.0);
+  for (std::size_t i = 1U; i < x.size(); ++i) {
+    if (!std::isfinite(x[i]) || !std::isfinite(y[i])) {
+      return curvatures;
     }
-  }
-
-  std::size_t forward_idx = points.size() - 1U;
-  for (std::size_t index = target_idx + 1U; index < points.size(); ++index) {
-    if (distance_from_center(points[index]) >= minimum_chord) {
-      forward_idx = index;
-      break;
+    const double ds = std::hypot(x[i] - compact_x.back(), y[i] - compact_y.back());
+    if (ds > kMinimumKnotDistance) {
+      knots.push_back(knots.back() + ds);
+      compact_x.push_back(x[i]);
+      compact_y.push_back(y[i]);
     }
+    query_s[i] = knots.back();
   }
 
-  if (backward_idx == target_idx || forward_idx == target_idx) {
-    return 0.0F;
+  const auto point_count = static_cast<Eigen::Index>(knots.size());
+  if (point_count < 3) {
+    return curvatures;
   }
 
-  const auto & first = points[backward_idx].pose.position;
-  const auto & last = points[forward_idx].pose.position;
-  const double first_to_center = std::hypot(center.x - first.x, center.y - first.y);
-  const double center_to_last = std::hypot(last.x - center.x, last.y - center.y);
-  const double first_to_last = std::hypot(last.x - first.x, last.y - first.y);
-  const double denominator = first_to_center * center_to_last * first_to_last;
-  if (
-    first_to_center < kSideLengthEpsilon || center_to_last < kSideLengthEpsilon ||
-    first_to_last < kSideLengthEpsilon || denominator < kMinimumDenominator) {
-    return 0.0F;
+  Eigen::MatrixXd second_difference = Eigen::MatrixXd::Zero(point_count - 2, point_count);
+  for (Eigen::Index row = 0; row < point_count - 2; ++row) {
+    second_difference(row, row) = 1.0;
+    second_difference(row, row + 1) = -2.0;
+    second_difference(row, row + 2) = 1.0;
+  }
+  const double weight = std::max(0.0, static_cast<double>(smoothing_weight));
+  const Eigen::MatrixXd system = Eigen::MatrixXd::Identity(point_count, point_count) +
+                                 weight * second_difference.transpose() * second_difference;
+  const Eigen::LDLT<Eigen::MatrixXd> solver(system);
+  if (solver.info() != Eigen::Success) {
+    return curvatures;
   }
 
-  const double cross =
-    (center.x - first.x) * (last.y - first.y) - (center.y - first.y) * (last.x - first.x);
-  return static_cast<float>(2.0 * cross / denominator);
+  const Eigen::Map<const Eigen::VectorXd> raw_x(compact_x.data(), point_count);
+  const Eigen::Map<const Eigen::VectorXd> raw_y(compact_y.data(), point_count);
+  const Eigen::VectorXd smooth_x_vector = solver.solve(raw_x);
+  const Eigen::VectorXd smooth_y_vector = solver.solve(raw_y);
+  if (solver.info() != Eigen::Success) {
+    return curvatures;
+  }
+  std::vector<double> smooth_x(smooth_x_vector.data(), smooth_x_vector.data() + point_count);
+  std::vector<double> smooth_y(smooth_y_vector.data(), smooth_y_vector.data() + point_count);
+
+  // Natural cubic splines impose zero second derivative at their endpoint knots. Pad the fitted
+  // path using quadratic extrapolation so the real path endpoints are evaluated in the interior.
+  const double first_step = knots[1] - knots[0];
+  const double last_step = knots[knots.size() - 1U] - knots[knots.size() - 2U];
+  const double before_s = knots.front() - first_step;
+  const double after_s = knots.back() + last_step;
+  const double before_x = evaluateQuadraticThroughPoints(
+    before_s, knots[0], smooth_x[0], knots[1], smooth_x[1], knots[2], smooth_x[2]);
+  const double before_y = evaluateQuadraticThroughPoints(
+    before_s, knots[0], smooth_y[0], knots[1], smooth_y[1], knots[2], smooth_y[2]);
+  const std::size_t last = smooth_x.size() - 1U;
+  const double after_x = evaluateQuadraticThroughPoints(
+    after_s, knots[last - 2U], smooth_x[last - 2U], knots[last - 1U], smooth_x[last - 1U],
+    knots[last], smooth_x[last]);
+  const double after_y = evaluateQuadraticThroughPoints(
+    after_s, knots[last - 2U], smooth_y[last - 2U], knots[last - 1U], smooth_y[last - 1U],
+    knots[last], smooth_y[last]);
+  knots.insert(knots.begin(), before_s);
+  knots.push_back(after_s);
+  smooth_x.insert(smooth_x.begin(), before_x);
+  smooth_x.push_back(after_x);
+  smooth_y.insert(smooth_y.begin(), before_y);
+  smooth_y.push_back(after_y);
+
+  const autoware::interpolation::SplineInterpolation x_of_s(knots, smooth_x);
+  const autoware::interpolation::SplineInterpolation y_of_s(knots, smooth_y);
+  const auto dx_ds = x_of_s.getSplineInterpolatedDiffValues(query_s);
+  const auto dy_ds = y_of_s.getSplineInterpolatedDiffValues(query_s);
+  const auto d2x_ds2 = x_of_s.getSplineInterpolatedQuadDiffValues(query_s);
+  const auto d2y_ds2 = y_of_s.getSplineInterpolatedQuadDiffValues(query_s);
+
+  constexpr double kMinimumSpeedSquared = 1.0E-12;
+  for (std::size_t i = 0U; i < x.size(); ++i) {
+    const double speed_squared = dx_ds[i] * dx_ds[i] + dy_ds[i] * dy_ds[i];
+    if (speed_squared <= kMinimumSpeedSquared) {
+      continue;
+    }
+    curvatures[i] = static_cast<float>(
+      (dx_ds[i] * d2y_ds2[i] - dy_ds[i] * d2x_ds2[i]) / (speed_squared * std::sqrt(speed_squared)));
+  }
+  return curvatures;
+}
+
+float clampSteeringToReachableRange(
+  const float desired_steering, const float current_steering, const float max_steer_rate,
+  const float dt, const float max_steer)
+{
+  const float absolute_limit = std::max(0.0F, max_steer);
+  const float current = std::clamp(current_steering, -absolute_limit, absolute_limit);
+  const float max_delta = std::max(0.0F, max_steer_rate) * std::max(0.0F, dt);
+  const float lower = std::max(-absolute_limit, current - max_delta);
+  const float upper = std::min(absolute_limit, current + max_delta);
+  return std::clamp(desired_steering, lower, upper);
 }
 
 std::vector<FirstOrderDubinsMppiControl> buildDiffusionNominalControl(
   const Trajectory & reference, const std::size_t start_idx,
   const FirstOrderDubinsMppiVehicleParams & vehicle_params, const int horizon,
-  const float min_chord_length_m)
+  const float smoothing_weight)
 {
   const int control_count = std::max(0, horizon);
   std::vector<FirstOrderDubinsMppiControl> nominal(static_cast<std::size_t>(control_count));
   if (reference.points.empty()) {
     return nominal;
   }
+
+  std::vector<double> reference_x;
+  std::vector<double> reference_y;
+  reference_x.reserve(reference.points.size());
+  reference_y.reserve(reference.points.size());
+  for (const auto & point : reference.points) {
+    reference_x.push_back(point.pose.position.x);
+    reference_y.push_back(point.pose.position.y);
+  }
+  const auto spline_curvatures =
+    computeSmoothedSplineCurvature(reference_x, reference_y, smoothing_weight);
 
   for (int t = 0; t < control_count; ++t) {
     const std::size_t index =
@@ -198,8 +285,7 @@ std::vector<FirstOrderDubinsMppiControl> buildDiffusionNominalControl(
       std::clamp(point.acceleration_mps2, vehicle_params.min_accel(), vehicle_params.max_accel());
     float steering = point.front_wheel_angle_rad;
     if (std::abs(steering) <= 1.0E-6F) {
-      const float curvature =
-        computeMengerCurvatureWithMinChord(reference.points, index, min_chord_length_m);
+      const float curvature = spline_curvatures[index];
       if (std::isfinite(curvature)) {
         steering = std::atan(vehicle_params.wheel_base * curvature);
       }
