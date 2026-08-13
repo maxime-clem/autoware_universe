@@ -75,7 +75,7 @@ void setInitialEngageVelocity(Trajectory & trajectory);
 [[nodiscard]] std::vector<FirstOrderDubinsMppiControl> buildDiffusionNominalControl(
   const Trajectory & reference, std::size_t start_idx,
   const FirstOrderDubinsMppiVehicleParams & vehicle_params, int horizon = kMppiHorizon,
-  float min_chord_length_m = 1.5F);
+  float smoothing_weight = 10.0F);
 
 [[nodiscard]] std::vector<FirstOrderDubinsMppiControl> buildForcedNominalControl(
   const std::vector<float> & acceleration_commands, const std::vector<float> & steering_commands,
@@ -88,9 +88,11 @@ void setInitialEngageVelocity(Trajectory & trajectory);
   const Trajectory & input, const std::vector<OptimizedState> & post_step_states,
   const std::vector<FirstOrderDubinsMppiControl> & controls);
 
-[[nodiscard]] float computeMengerCurvatureWithMinChord(
-  const std::vector<autoware_planning_msgs::msg::TrajectoryPoint> & points, std::size_t target_idx,
-  float min_chord_length_m = 1.5F) noexcept;
+[[nodiscard]] std::vector<float> computeSmoothedSplineCurvature(
+  const std::vector<double> & x, const std::vector<double> & y, float smoothing_weight);
+
+[[nodiscard]] float clampSteeringToReachableRange(
+  float desired_steering, float current_steering, float max_steer_rate, float dt, float max_steer);
 
 }  // namespace autoware::mppi_optimizer::detail
 
