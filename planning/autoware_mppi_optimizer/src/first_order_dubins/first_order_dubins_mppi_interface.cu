@@ -56,8 +56,8 @@ namespace
 constexpr int kMppiHorizon = detail::kMppiHorizon;
 constexpr int kRefHorizon = kMppiHorizon;
 constexpr float kDt = detail::kMppiDt;
-constexpr size_t kMaxIter = 10;
-constexpr int kNumRollouts = 8 * 1024;
+constexpr size_t kMaxIter = 3;
+constexpr int kNumRollouts = 16 * 1024;
 constexpr int kMaxVizRollouts = 256;
 constexpr int kMaxWorstVizRollouts = 128;
 constexpr char kLoggerName[] = "first_order_dubins_mppi";
@@ -610,19 +610,20 @@ struct FirstOrderDubinsMppiInterface::Impl
     // jitter into the importance-weighted average. Lateral reach comes from optimizing around
     // a zero (or explicit) steer seed, not from huge white noise.
     // Historical: 0.001 * (L/0.32) ≈ 0.015 rad on j6; 0.01 * (L/0.32) ≈ 0.15 rad was too noisy.
-    constexpr float kReferenceWheelBase = 0.32F;
-    constexpr float kReferenceSteerStd = 2e-3F;
-    const float steer_std = kReferenceSteerStd * (vehicle_params.wheel_base / kReferenceWheelBase);
+    constexpr float kReferenceSteerStd = 3e-3F;
+    const float steer_std =
+      kReferenceSteerStd * (vehicle_params.wheel_base / vehicle_params.wheel_base);
 
     sp.std_dev[static_cast<int>(FirstOrderDubinsBicycleParams::ControlIndex::STEER_CMD)] =
       steer_std;
+    sp.std_dev_decay = 0.8;
     sp.sum_strides = std::max(32, (kNumRollouts + 1023) / 1024);
 #ifdef USE_COLOURED_NOISE
     // Power-law PSD exponents (0 = white, 1 = pink, 2 = brown). Pink steer keeps lateral
     // reach while cutting high-frequency δ_cmd chatter from i.i.d. Gaussian samples.
     sp.exponents[static_cast<int>(FirstOrderDubinsBicycleParams::ControlIndex::ACCELERATION_CMD)] =
-      0.5F;
-    sp.exponents[static_cast<int>(FirstOrderDubinsBicycleParams::ControlIndex::STEER_CMD)] = 2.0F;
+      2.0F;
+    sp.exponents[static_cast<int>(FirstOrderDubinsBicycleParams::ControlIndex::STEER_CMD)] = 1.0F;
 #elif defined(USE_SMOOTH_MPPI)
     // Smooth-MPPI samples action derivatives and integrates with dt.
     sp.dt = kDt;
