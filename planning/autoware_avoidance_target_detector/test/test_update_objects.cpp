@@ -503,6 +503,19 @@ TYPED_TEST(UpdateObjectsTest, RangeFilterRetainsObjectsProjectedIntoRange)
   EXPECT_EQ(object_ids(filtered), std::vector<uint8_t>({1}));
 }
 
+TYPED_TEST(UpdateObjectsTest, RangeFilterIncludesAdditionalPredictionHorizon)
+{
+  const auto objects = make_objects<TypeParam>({make_object<TypeParam>(1, -8.3, 0.0, 1.0)});
+
+  const auto without_additional_horizon =
+    filter_objects_in_range(objects, make_timed_filter_trajectory(), 1.0);
+  const auto with_additional_horizon =
+    filter_objects_in_range(objects, make_timed_filter_trajectory(), 1.0, 0.2);
+
+  EXPECT_TRUE(without_additional_horizon.objects.empty());
+  EXPECT_EQ(object_ids(with_additional_horizon), std::vector<uint8_t>({1}));
+}
+
 TYPED_TEST(UpdateObjectsTest, RangeFilterRetainsMovingObjectsWithoutProjectionHorizon)
 {
   const auto objects = make_objects<TypeParam>({make_object<TypeParam>(1, -100.0, 100.0, 3.0)});
@@ -519,6 +532,19 @@ TYPED_TEST(UpdateObjectsTest, RangeFilterRejectsInvalidMargins)
   EXPECT_THROW(
     {
       const auto filtered = filter_objects_in_range(objects, make_timed_filter_trajectory(), -1.0);
+      (void)filtered;
+    },
+    std::invalid_argument);
+}
+
+TYPED_TEST(UpdateObjectsTest, RangeFilterRejectsInvalidAdditionalPredictionHorizon)
+{
+  const auto objects = make_objects<TypeParam>({make_object<TypeParam>(1, 5.0, 0.0)});
+
+  EXPECT_THROW(
+    {
+      const auto filtered =
+        filter_objects_in_range(objects, make_timed_filter_trajectory(), 1.0, -0.1);
       (void)filtered;
     },
     std::invalid_argument);

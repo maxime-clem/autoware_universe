@@ -312,19 +312,23 @@ using TrackedObjectSelector = ObjectSelectorBase<TrackedObject>;
 /**
  * @brief Retain objects whose projected circular footprint reaches a trajectory corridor.
  * @details Projects each object with constant object-frame longitudinal velocity over the
- *          trajectory time horizon. The margin expands the trajectory from the base_link path.
- *          The returned message preserves the input header and object order.
+ *          trajectory time horizon plus additional_prediction_horizon. The margin expands the
+ *          trajectory from the base_link path. The returned message preserves the input header
+ *          and object order.
  */
 [[nodiscard]] PredictedObjects filter_objects_in_range(
-  const PredictedObjects & objects, const Trajectory & trajectory, double margin);
+  const PredictedObjects & objects, const Trajectory & trajectory, double margin,
+  double additional_prediction_horizon = 0.0);
 
 /**
  * @brief Retain tracked objects whose projected circular footprint reaches a trajectory corridor.
  * @details Uses the same constant object-frame longitudinal velocity model as the tracked-object
- *          MPPI adapter. The returned message preserves the input header and object order.
+ *          MPPI adapter and projects through additional_prediction_horizon beyond the trajectory
+ *          horizon. The returned message preserves the input header and object order.
  */
 [[nodiscard]] TrackedObjects filter_objects_in_range(
-  const TrackedObjects & objects, const Trajectory & trajectory, double margin);
+  const TrackedObjects & objects, const Trajectory & trajectory, double margin,
+  double additional_prediction_horizon = 0.0);
 
 /**
  * @brief Check whether the object footprint lies beyond the trajectory end in arc-length.

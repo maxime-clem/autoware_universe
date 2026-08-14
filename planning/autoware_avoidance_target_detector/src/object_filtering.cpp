@@ -243,16 +243,21 @@ double projected_path_to_trajectory_distance(
 
 template <typename ObjectsT>
 ObjectsT filter_objects_in_range_impl(
-  const ObjectsT & objects, const Trajectory & trajectory, const double margin)
+  const ObjectsT & objects, const Trajectory & trajectory, const double margin,
+  const double additional_prediction_horizon)
 {
   if (!std::isfinite(margin) || margin < 0.0) {
     throw std::invalid_argument("The object filter margin must be finite and nonnegative");
+  }
+  if (!std::isfinite(additional_prediction_horizon) || additional_prediction_horizon < 0.0) {
+    throw std::invalid_argument(
+      "The additional object prediction horizon must be finite and nonnegative");
   }
   if (trajectory.points.empty()) {
     return objects;
   }
 
-  const double horizon = trajectory_horizon_seconds(trajectory);
+  const double horizon = trajectory_horizon_seconds(trajectory) + additional_prediction_horizon;
   ObjectsT filtered;
   filtered.header = objects.header;
   filtered.objects.reserve(objects.objects.size());
@@ -979,15 +984,17 @@ bool should_filter_out_by_lateral_distance(
 }  // namespace
 
 PredictedObjects filter_objects_in_range(
-  const PredictedObjects & objects, const Trajectory & trajectory, const double margin)
+  const PredictedObjects & objects, const Trajectory & trajectory, const double margin,
+  const double additional_prediction_horizon)
 {
-  return filter_objects_in_range_impl(objects, trajectory, margin);
+  return filter_objects_in_range_impl(objects, trajectory, margin, additional_prediction_horizon);
 }
 
 TrackedObjects filter_objects_in_range(
-  const TrackedObjects & objects, const Trajectory & trajectory, const double margin)
+  const TrackedObjects & objects, const Trajectory & trajectory, const double margin,
+  const double additional_prediction_horizon)
 {
-  return filter_objects_in_range_impl(objects, trajectory, margin);
+  return filter_objects_in_range_impl(objects, trajectory, margin, additional_prediction_horizon);
 }
 
 template <typename ObjectT>

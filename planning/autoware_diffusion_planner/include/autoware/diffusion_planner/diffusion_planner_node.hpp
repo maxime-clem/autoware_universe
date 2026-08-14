@@ -296,6 +296,7 @@ private:
     extended_route_handler_;
   autoware::avoidance_target_detector::TrackedObjectSelector object_selector_;
   double mppi_object_filter_margin_m_{0.0};
+  double mppi_object_filter_additional_prediction_horizon_s_{0.0};
   HADMapBin lanelet_map_msg_;
   LaneletRoute prev_route_;
 };
