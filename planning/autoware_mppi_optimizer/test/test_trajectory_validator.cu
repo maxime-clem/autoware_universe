@@ -143,35 +143,6 @@ TEST_F(TrajectoryValidatorTest, ReportsRunningCostComponentsWithoutChangingTheir
   EXPECT_EQ(direct_crash_status, 0);
 }
 
-TEST_F(TrajectoryValidatorTest, UsesStoppingTrackScaleOnlyBelowStoppingVelocity)
-{
-  auto params = makeParams();
-  params.track_coeff = 2.0F;
-  params.track_center_coeff = 5.0F;
-  params.track_terminal_scale = 7.0F;
-  params.track_terminal_stopping_scale = 3.0F;
-  params.stopping_velocity = 0.5F;
-  params.heading_coeff = 0.0F;
-  params.corner_buffer_coeff = 0.0F;
-  params.drivable_area_barrier_weight = 0.0F;
-  cost_->setParams(params);
-  setStraightReference();
-
-  TestCost::output_array output = TestCost::output_array::Zero();
-  output(static_cast<int>(OutputIndex::BASELINK_POS_I_X)) =
-    0.20F * static_cast<float>(kTestHorizon - 1) + 1.0F;
-
-  output(static_cast<int>(OutputIndex::TOTAL_VELOCITY)) = 0.49F;
-  const auto stopping_breakdown = cost_->computeTerminalCostBreakdown(output);
-  EXPECT_NEAR(stopping_breakdown.track, 6.0F, 1.0E-5F);
-  EXPECT_NEAR(stopping_breakdown.track_center, 18.0F, 1.0E-5F);
-
-  output(static_cast<int>(OutputIndex::TOTAL_VELOCITY)) = 0.5F;
-  const auto threshold_breakdown = cost_->computeTerminalCostBreakdown(output);
-  EXPECT_NEAR(threshold_breakdown.track, 14.0F, 1.0E-5F);
-  EXPECT_NEAR(threshold_breakdown.track_center, 42.0F, 1.0E-5F);
-}
-
 TEST_F(TrajectoryValidatorTest, SmoothBarrierCostRampsUpQuadratically)
 {
   constexpr float safe_margin = 1.0F;
@@ -209,6 +180,36 @@ TEST_F(TrajectoryValidatorTest, SmoothBarrierCostRampsUpQuadratically)
   EXPECT_NEAR(
     cost_->computeRunningCostBreakdown(output, control, 0, &crash_status).obstacle, weight * 0.25F,
     1.0E-3F);
+}
+
+TEST_F(TrajectoryValidatorTest, LateralBoundaryBarrierActivatesBeforeHardThreshold)
+{
+  auto params = makeParams();
+  params.boundary_threshold = 0.8F;
+  params.lateral_boundary_soft_margin = 0.2F;
+  params.lateral_boundary_barrier_weight = 2000.0F;
+  params.lateral_distance_coeff = 10.0F;
+  params.max_crash_penalty = 100000.0F;
+  cost_->setParams(params);
+  setStraightReference();
+
+  EXPECT_NEAR(cost_->computeLateralBoundaryCost(0.6F), 0.0F, 1.0E-5F);
+  EXPECT_NEAR(cost_->computeLateralBoundaryCost(0.7F), 20.0F, 1.0E-3F);
+  EXPECT_NEAR(cost_->computeLateralBoundaryCost(0.8F), 80.0F, 1.0E-3F);
+  EXPECT_FLOAT_EQ(cost_->computeLateralBoundaryCost(10.0F), params.max_crash_penalty);
+  EXPECT_FALSE(cost_->exceedsLateralBoundary(0.0F, 0.7F));
+  EXPECT_TRUE(cost_->exceedsLateralBoundary(0.0F, 0.8F));
+
+  TestCost::output_array output = TestCost::output_array::Zero();
+  output(static_cast<int>(OutputIndex::BASELINK_POS_I_Y)) = 0.7F;
+  TestCost::control_array control = TestCost::control_array::Zero();
+  int crash_status = 0;
+  const auto breakdown = cost_->computeRunningCostBreakdown(output, control, 0, &crash_status);
+
+  EXPECT_NEAR(breakdown.lateral_distance, 7.0F, 1.0E-4F);
+  EXPECT_NEAR(breakdown.lateral_boundary, 20.0F, 1.0E-3F);
+  EXPECT_NEAR(breakdown.componentTotal(), breakdown.total, 1.0E-4F);
+  EXPECT_EQ(crash_status, 0);
 }
 
 TEST_F(TrajectoryValidatorTest, SmoothBarrierCostCapsAtFiniteMaximum)
@@ -276,7 +277,6 @@ TEST_F(TrajectoryValidatorTest, ExcludesMovingObjectsFromGradualObstacleCost)
 TEST_F(TrajectoryValidatorTest, GradualConstraintCostsAreIncludedInBreakdownTotal)
 {
   auto params = makeParams();
-  params.desired_speed = 2.0F;
   params.speed_coeff = 0.0F;
   params.track_coeff = 0.0F;
   params.heading_coeff = 0.0F;

@@ -151,6 +151,10 @@ void applyCostParam(
     params.corner_safe_margin = value;
   } else if (key == "boundary_threshold") {
     params.boundary_threshold = value;
+  } else if (key == "lateral_boundary_soft_margin") {
+    params.lateral_boundary_soft_margin = value;
+  } else if (key == "lateral_boundary_barrier_weight") {
+    params.lateral_boundary_barrier_weight = value;
   } else if (key == "accel_cmd_coeff") {
     params.accel_cmd_coeff = value;
   } else if (key == "steer_cmd_coeff") {
@@ -749,6 +753,7 @@ int run(int argc, char ** argv)
       breakdown_out << "state/track," << breakdown.track << "\n";
       breakdown_out << "state/heading," << breakdown.heading << "\n";
       breakdown_out << "state/lateral_distance," << breakdown.lateral_distance << "\n";
+      breakdown_out << "state/lateral_boundary," << breakdown.lateral_boundary << "\n";
       breakdown_out << "state/lateral_yaw_error," << breakdown.lateral_yaw_error << "\n";
       breakdown_out << "state/track_center," << breakdown.track_center << "\n";
       breakdown_out << "state/corner_buffer," << breakdown.corner_buffer << "\n";

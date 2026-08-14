@@ -211,6 +211,7 @@ TEST_F(FirstOrderDubinsMppiInterfaceGpuTest, RejectsAtInclusiveLateralBoundaryTh
 {
   FirstOrderDubinsMppiCostParams cost_params;
   cost_params.boundary_threshold = 0.5F;
+  cost_params.lateral_boundary_barrier_weight = 0.0F;
   interface_->setCostParams(cost_params);
   FirstOrderDubinsMppiRuntimeOptions options;
   options.skip_if_invalid = true;
@@ -286,6 +287,7 @@ TEST_F(FirstOrderDubinsMppiInterfaceGpuTest, DoesNotRejectInvalidOutputWhenOptio
 {
   FirstOrderDubinsMppiCostParams cost_params;
   cost_params.boundary_threshold = 0.5F;
+  cost_params.lateral_boundary_barrier_weight = 0.0F;
   interface_->setCostParams(cost_params);
   FirstOrderDubinsMppiRuntimeOptions options;
   options.skip_if_invalid = false;
@@ -326,6 +328,7 @@ TEST_F(FirstOrderDubinsMppiInterfaceGpuTest, HandlesInitialOffsetsAcrossThreshol
     const auto & tc = test_cases[idx];
     FirstOrderDubinsMppiCostParams cost_params;
     cost_params.boundary_threshold = tc.threshold;
+    cost_params.lateral_boundary_barrier_weight = 0.0F;
     interface_->setCostParams(cost_params);
 
     const auto input = makeStraightTrajectory(30U);

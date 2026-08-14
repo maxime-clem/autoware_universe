@@ -84,11 +84,12 @@ using SAMPLER = mppi::sampling_distributions::GaussianDistribution<DYN::DYN_PARA
 using Mppi = VanillaMPPIController<DYN, COST, FB, kMppiHorizon, kNumRollouts, SAMPLER>;
 using CostBreakdown = FirstOrderDubinsMppiCostBreakdown;
 
-constexpr std::array<float CostBreakdown::*, 19> kCostBreakdownFields = {
+constexpr std::array<float CostBreakdown::*, 20> kCostBreakdownFields = {
   &CostBreakdown::speed,
   &CostBreakdown::track,
   &CostBreakdown::heading,
   &CostBreakdown::lateral_distance,
+  &CostBreakdown::lateral_boundary,
   &CostBreakdown::lateral_yaw_error,
   &CostBreakdown::track_center,
   &CostBreakdown::corner_buffer,
@@ -198,6 +199,8 @@ void applyUserCostParams(
   cost_params.corner_buffer_coeff = user.corner_buffer_coeff;
   cost_params.corner_safe_margin = user.corner_safe_margin;
   cost_params.boundary_threshold = user.boundary_threshold;
+  cost_params.lateral_boundary_soft_margin = user.lateral_boundary_soft_margin;
+  cost_params.lateral_boundary_barrier_weight = user.lateral_boundary_barrier_weight;
   cost_params.accel_cmd_coeff = user.accel_cmd_coeff;
   cost_params.steer_cmd_coeff = user.steer_cmd_coeff;
   cost_params.steer_rate_coeff = user.steer_rate_coeff;
@@ -655,8 +658,9 @@ struct FirstOrderDubinsMppiInterface::Impl
       "wheel_base=%.2f, max_steer=%.2f, steer_std=%.3f, acc_tau=%.2f, steer_tau=%.2f, "
       "acc_delay=%.3f (%d steps), steer_delay=%.3f (%d steps), delay_comp_steps=%d, "
       "steer_rate_lim=%.2f, vel_rate_lim=%.2f, ego=%.2fx%.2f, axle_to_center=%.2f, "
-      "boundary_threshold=%.2f, obs_margin=%.2f, road_border_margin=%.2f, "
-      "obs_barrier=%.2f@%.2f, road_barrier=%.2f@%.2f, drive_barrier=%.2f@%.2f, "
+      "boundary_threshold=%.2f, lateral_barrier=%.2f@%.2f, "
+      "obs_margin=%.2f, road_border_margin=%.2f, obs_barrier=%.2f@%.2f, "
+      "road_barrier=%.2f@%.2f, drive_barrier=%.2f@%.2f, "
       "max_crash_penalty=%.2f)",
       kMppiHorizon, kNumRollouts, kDt, user_cost_params_.lambda, vehicle_params.wheel_base,
       vehicle_params.max_steer_angle, steer_std, vehicle_params.acc_time_constant,
@@ -664,7 +668,8 @@ struct FirstOrderDubinsMppiInterface::Impl
       vehicle_params.steer_time_delay, steer_delay_steps, delay_steps,
       vehicle_params.steer_rate_lim, vehicle_params.vel_rate_lim, vehicle_params.ego_length,
       vehicle_params.ego_width, vehicle_params.ego_axle_to_box_center,
-      cost_params.boundary_threshold, cost_params.obstacle_collision_margin,
+      cost_params.boundary_threshold, cost_params.lateral_boundary_barrier_weight,
+      cost_params.lateral_boundary_soft_margin, cost_params.obstacle_collision_margin,
       cost_params.road_border_collision_margin, cost_params.obstacle_barrier_weight,
       cost_params.obstacle_safe_margin, cost_params.road_border_barrier_weight,
       cost_params.road_border_safe_margin, cost_params.drivable_area_barrier_weight,

@@ -33,6 +33,9 @@ struct FirstOrderDubinsMppiCostParams
   float corner_buffer_coeff{0.0F};
   float corner_safe_margin{0.3F};
   float boundary_threshold{1.5F};
+  /** Distance inside boundary_threshold at which the gradual lateral barrier activates. */
+  float lateral_boundary_soft_margin{0.2F};
+  float lateral_boundary_barrier_weight{2000.0F};
   float accel_cmd_coeff{0.0F};
   float steer_cmd_coeff{0.0F};
   float steer_rate_coeff{0.0F};

@@ -856,6 +856,7 @@ void DiffusionPlanner::publish_mppi_cost_diagnostics(
   diagnostics_mppi_cost_->add_key_value("state/track", cost.track);
   diagnostics_mppi_cost_->add_key_value("state/heading", cost.heading);
   diagnostics_mppi_cost_->add_key_value("state/lateral_distance", cost.lateral_distance);
+  diagnostics_mppi_cost_->add_key_value("state/lateral_boundary", cost.lateral_boundary);
   diagnostics_mppi_cost_->add_key_value("state/lateral_yaw_error", cost.lateral_yaw_error);
   diagnostics_mppi_cost_->add_key_value("state/track_center", cost.track_center);
   diagnostics_mppi_cost_->add_key_value("state/corner_buffer", cost.corner_buffer);
