@@ -161,7 +161,7 @@ TEST(NominalControl, CopiesClampsPadsAndDerivesSteeringFromCurvature)
   vehicle.vel_rate_lim = 3.0F;
   vehicle.max_steer_angle = 0.4F;
   vehicle.wheel_base = 0.32F;
-  const auto nominal = buildDiffusionNominalControl(trajectory, 0U, vehicle, 4);
+  const auto nominal = buildDiffusionNominalControl(trajectory, 0U, vehicle, 4, 0.0F);
 
   ASSERT_EQ(nominal.size(), 4U);
   EXPECT_FLOAT_EQ(nominal[0].accel_cmd, vehicle.max_accel());
@@ -172,13 +172,41 @@ TEST(NominalControl, CopiesClampsPadsAndDerivesSteeringFromCurvature)
     x.push_back(point.pose.position.x);
     y.push_back(point.pose.position.y);
   }
-  const float expected_curvature = computeSmoothedSplineCurvature(x, y, 10.0F).front();
+  const float expected_curvature = computeSmoothedSplineCurvature(x, y, 0.0F).front();
   EXPECT_NEAR(nominal[0].steer_cmd, std::atan(vehicle.wheel_base * expected_curvature), 1.0E-6F);
 
   EXPECT_FLOAT_EQ(nominal[1].accel_cmd, vehicle.min_accel());
   EXPECT_FLOAT_EQ(nominal[1].steer_cmd, vehicle.max_steer_angle);  // Clamped from 1.0F -> 0.4F
   EXPECT_FLOAT_EQ(nominal[3].accel_cmd, nominal[1].accel_cmd);
   EXPECT_FLOAT_EQ(nominal[3].steer_cmd, nominal[1].steer_cmd);
+}
+
+TEST(NominalControl, SmoothsReferenceAcceleration)
+{
+  auto trajectory = makeTrajectory(7U, 1.0, 2.0F);
+  for (auto & point : trajectory.points) {
+    point.acceleration_mps2 = 0.0F;
+  }
+  trajectory.points[3].acceleration_mps2 = 3.0F;
+
+  FirstOrderDubinsMppiVehicleParams vehicle;
+  vehicle.vel_rate_lim = 3.0F;
+  const auto raw = buildDiffusionNominalControl(trajectory, 0U, vehicle, 7, 0.0F);
+  const auto smoothed = buildDiffusionNominalControl(trajectory, 0U, vehicle, 7, 10.0F);
+
+  ASSERT_EQ(raw.size(), smoothed.size());
+  EXPECT_FLOAT_EQ(raw[3].accel_cmd, 3.0F);
+  EXPECT_LT(smoothed[3].accel_cmd, raw[3].accel_cmd);
+
+  float raw_roughness = 0.0F;
+  float smoothed_roughness = 0.0F;
+  for (std::size_t i = 1U; i + 1U < raw.size(); ++i) {
+    raw_roughness +=
+      std::abs(raw[i - 1U].accel_cmd - 2.0F * raw[i].accel_cmd + raw[i + 1U].accel_cmd);
+    smoothed_roughness += std::abs(
+      smoothed[i - 1U].accel_cmd - 2.0F * smoothed[i].accel_cmd + smoothed[i + 1U].accel_cmd);
+  }
+  EXPECT_LT(smoothed_roughness, raw_roughness);
 }
 
 TEST(SmoothedSplineCurvature, CollinearPointsHaveZeroCurvatureWithVariableSpacing)

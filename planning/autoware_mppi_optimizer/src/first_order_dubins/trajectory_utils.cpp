@@ -50,6 +50,48 @@ double evaluateQuadraticThroughPoints(
   return basis0 * value0 + basis1 * value1 + basis2 * value2;
 }
 
+std::vector<float> smoothSecondDifference(
+  const std::vector<float> & values, const float smoothing_weight)
+{
+  if (values.size() < 3U || smoothing_weight <= 0.0F) {
+    return values;
+  }
+  if (!std::all_of(
+        values.begin(), values.end(), [](const float value) { return std::isfinite(value); })) {
+    return values;
+  }
+
+  const auto value_count = static_cast<Eigen::Index>(values.size());
+  Eigen::MatrixXd second_difference = Eigen::MatrixXd::Zero(value_count - 2, value_count);
+  for (Eigen::Index row = 0; row < value_count - 2; ++row) {
+    second_difference(row, row) = 1.0;
+    second_difference(row, row + 1) = -2.0;
+    second_difference(row, row + 2) = 1.0;
+  }
+  const Eigen::MatrixXd system =
+    Eigen::MatrixXd::Identity(value_count, value_count) +
+    static_cast<double>(smoothing_weight) * second_difference.transpose() * second_difference;
+  const Eigen::LDLT<Eigen::MatrixXd> solver(system);
+  if (solver.info() != Eigen::Success) {
+    return values;
+  }
+
+  Eigen::VectorXd raw_values(value_count);
+  for (Eigen::Index i = 0; i < value_count; ++i) {
+    raw_values[i] = static_cast<double>(values[static_cast<std::size_t>(i)]);
+  }
+  const Eigen::VectorXd smoothed_values = solver.solve(raw_values);
+  if (solver.info() != Eigen::Success) {
+    return values;
+  }
+
+  std::vector<float> result(values.size());
+  for (Eigen::Index i = 0; i < value_count; ++i) {
+    result[static_cast<std::size_t>(i)] = static_cast<float>(smoothed_values[i]);
+  }
+  return result;
+}
+
 }  // namespace
 
 bool isOptimizationRequired(const Trajectory & trajectory)
@@ -267,22 +309,28 @@ std::vector<FirstOrderDubinsMppiControl> buildDiffusionNominalControl(
 
   std::vector<double> reference_x;
   std::vector<double> reference_y;
+  std::vector<float> reference_acceleration;
   reference_x.reserve(reference.points.size());
   reference_y.reserve(reference.points.size());
+  reference_acceleration.reserve(reference.points.size());
   for (const auto & point : reference.points) {
     reference_x.push_back(point.pose.position.x);
     reference_y.push_back(point.pose.position.y);
+    reference_acceleration.push_back(
+      std::clamp(point.acceleration_mps2, vehicle_params.min_accel(), vehicle_params.max_accel()));
   }
   const auto spline_curvatures =
     computeSmoothedSplineCurvature(reference_x, reference_y, smoothing_weight);
+  const auto smoothed_acceleration =
+    smoothSecondDifference(reference_acceleration, std::max(0.0F, smoothing_weight));
 
   for (int t = 0; t < control_count; ++t) {
     const std::size_t index =
       std::min(start_idx + static_cast<std::size_t>(t), reference.points.size() - 1U);
     const auto & point = reference.points[index];
     auto & control = nominal[static_cast<std::size_t>(t)];
-    control.accel_cmd =
-      std::clamp(point.acceleration_mps2, vehicle_params.min_accel(), vehicle_params.max_accel());
+    control.accel_cmd = std::clamp(
+      smoothed_acceleration[index], vehicle_params.min_accel(), vehicle_params.max_accel());
     float steering = point.front_wheel_angle_rad;
     if (std::abs(steering) <= 1.0E-6F) {
       const float curvature = spline_curvatures[index];
