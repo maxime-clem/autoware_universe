@@ -54,6 +54,14 @@ struct FirstOrderDubinsMppiControl
   float steer_cmd{0.0F};
 };
 
+/** Nominal control sequence supplied to MPPI before sampling and optimization. */
+struct FirstOrderDubinsMppiNominalControlProfile
+{
+  float time_step_s{0.0F};
+  std::vector<float> acceleration_commands_mps2;
+  std::vector<float> steering_commands_rad;
+};
+
 struct FirstOrderDubinsMppiRollout
 {
   std::vector<std::pair<float, float>> points;
@@ -162,6 +170,7 @@ struct FirstOrderDubinsMppiDebug
   Trajectory optimized_trajectory;
   std::vector<std::pair<float, float>> optimal_horizon;
   std::vector<FirstOrderDubinsMppiRollout> rollouts;
+  FirstOrderDubinsMppiNominalControlProfile nominal_control_profile;
   FirstOrderDubinsMppiCostBreakdown cost_breakdown;
   float baseline_cost{0.0F};
   /** Hard-constraint validation of the generated post-step states. */
