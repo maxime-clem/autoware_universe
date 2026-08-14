@@ -143,6 +143,35 @@ TEST_F(TrajectoryValidatorTest, ReportsRunningCostComponentsWithoutChangingTheir
   EXPECT_EQ(direct_crash_status, 0);
 }
 
+TEST_F(TrajectoryValidatorTest, UsesStoppingTrackScaleOnlyBelowStoppingVelocity)
+{
+  auto params = makeParams();
+  params.track_coeff = 2.0F;
+  params.track_center_coeff = 5.0F;
+  params.track_terminal_scale = 7.0F;
+  params.track_terminal_stopping_scale = 3.0F;
+  params.stopping_velocity = 0.5F;
+  params.heading_coeff = 0.0F;
+  params.corner_buffer_coeff = 0.0F;
+  params.drivable_area_crossing_coeff = 0.0F;
+  cost_->setParams(params);
+  setStraightReference();
+
+  TestCost::output_array output = TestCost::output_array::Zero();
+  output(static_cast<int>(OutputIndex::BASELINK_POS_I_X)) =
+    0.20F * static_cast<float>(kTestHorizon - 1) + 1.0F;
+
+  output(static_cast<int>(OutputIndex::TOTAL_VELOCITY)) = 0.49F;
+  const auto stopping_breakdown = cost_->computeTerminalCostBreakdown(output);
+  EXPECT_NEAR(stopping_breakdown.track, 6.0F, 1.0E-5F);
+  EXPECT_NEAR(stopping_breakdown.track_center, 18.0F, 1.0E-5F);
+
+  output(static_cast<int>(OutputIndex::TOTAL_VELOCITY)) = 0.5F;
+  const auto threshold_breakdown = cost_->computeTerminalCostBreakdown(output);
+  EXPECT_NEAR(threshold_breakdown.track, 14.0F, 1.0E-5F);
+  EXPECT_NEAR(threshold_breakdown.track_center, 42.0F, 1.0E-5F);
+}
+
 TEST_F(TrajectoryValidatorTest, AppliesBoundaryThresholdSymmetricallyAndInclusively)
 {
   auto params = makeParams();

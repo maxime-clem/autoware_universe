@@ -191,6 +191,8 @@ void applyUserCostParams(
   cost_params.speed_coeff = user.speed_coeff;
   cost_params.track_coeff = user.track_coeff;
   cost_params.track_terminal_scale = user.track_terminal_scale;
+  cost_params.track_terminal_stopping_scale = user.track_terminal_stopping_scale;
+  cost_params.stopping_velocity = user.stopping_velocity;
   cost_params.heading_coeff = user.heading_coeff;
   cost_params.lateral_distance_coeff = user.lateral_distance_coeff;
   cost_params.lateral_yaw_error_coeff = user.lateral_yaw_error_coeff;

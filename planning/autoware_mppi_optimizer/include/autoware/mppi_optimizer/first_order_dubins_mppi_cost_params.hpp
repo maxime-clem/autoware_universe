@@ -27,6 +27,9 @@ struct FirstOrderDubinsMppiCostParams
   float speed_coeff{500.0F};
   float track_coeff{1000.0F};
   float track_terminal_scale{10.0F};
+  /** Terminal tracking scale used instead when terminal speed is below stopping_velocity. */
+  float track_terminal_stopping_scale{10.0F};
+  float stopping_velocity{0.5F};
   float heading_coeff{500.0F};
   float lateral_distance_coeff{0.0F};
   float lateral_yaw_error_coeff{0.0F};

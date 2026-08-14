@@ -36,6 +36,9 @@ void declare_first_order_dubins_mppi_cost_params(rclcpp::Node & node, const std:
   node.declare_parameter(param_name(prefix, "speed_coeff"), defaults.speed_coeff);
   node.declare_parameter(param_name(prefix, "track_coeff"), defaults.track_coeff);
   node.declare_parameter(param_name(prefix, "track_terminal_scale"), defaults.track_terminal_scale);
+  node.declare_parameter(
+    param_name(prefix, "track_terminal_stopping_scale"), defaults.track_terminal_stopping_scale);
+  node.declare_parameter(param_name(prefix, "stopping_velocity"), defaults.stopping_velocity);
   node.declare_parameter(param_name(prefix, "heading_coeff"), defaults.heading_coeff);
   node.declare_parameter(
     param_name(prefix, "lateral_distance_coeff"), defaults.lateral_distance_coeff);
@@ -82,6 +85,10 @@ FirstOrderDubinsMppiCostParams get_first_order_dubins_mppi_cost_params(
     static_cast<float>(node.get_parameter(param_name(prefix, "track_coeff")).as_double());
   params.track_terminal_scale =
     static_cast<float>(node.get_parameter(param_name(prefix, "track_terminal_scale")).as_double());
+  params.track_terminal_stopping_scale = static_cast<float>(
+    node.get_parameter(param_name(prefix, "track_terminal_stopping_scale")).as_double());
+  params.stopping_velocity =
+    static_cast<float>(node.get_parameter(param_name(prefix, "stopping_velocity")).as_double());
   params.heading_coeff =
     static_cast<float>(node.get_parameter(param_name(prefix, "heading_coeff")).as_double());
   params.lateral_distance_coeff = static_cast<float>(

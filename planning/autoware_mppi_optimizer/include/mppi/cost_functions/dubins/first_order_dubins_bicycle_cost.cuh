@@ -19,6 +19,10 @@ struct FirstOrderDubinsBicycleCostParams : public CostParams<2>
   float track_coeff = 1000.0F;
   /** Multiplier on track_coeff * track_val in terminalCost (running state cost uses scale 1). */
   float track_terminal_scale = 10.0F;
+  /** Terminal tracking multiplier selected when terminal speed is below stopping_velocity. */
+  float track_terminal_stopping_scale = 10.0F;
+  /** Speed-magnitude threshold [m/s] for selecting track_terminal_stopping_scale. */
+  float stopping_velocity = 0.5F;
   /** Pull toward ref heading at each horizon step: coeff * (yaw - ref_yaw[t])^2; 0 disables. */
   float heading_coeff = 500.0F;
   /** Spatial (closest-segment) distance to the reference polyline; 0 disables. */
@@ -139,6 +143,9 @@ public:
   /** Distance from the ego footprint center to the time-aligned reference sample. */
   __host__ __device__ float computeTrackCenterValue(
     float x, float y, float yaw, int timestep) const;
+
+  /** Select the normal or stopping terminal tracking multiplier from terminal speed. */
+  __host__ __device__ float terminalTrackScale(float velocity) const;
 
   /** Soft clearance cost for ego corners near drivable-area boundary segments. */
   __host__ __device__ float computeCornerBufferCost(float x, float y, float yaw) const;

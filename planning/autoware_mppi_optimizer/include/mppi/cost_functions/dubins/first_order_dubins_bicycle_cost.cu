@@ -211,8 +211,8 @@ void FirstOrderDubinsBicycleCostImpl<CLASS_T, NUM_TIMESTEPS, PARAMS_T, DYN_PARAM
 }
 
 template <class CLASS_T, int NUM_TIMESTEPS, class PARAMS_T, class DYN_PARAMS_T>
-void FirstOrderDubinsBicycleCostImpl<CLASS_T, NUM_TIMESTEPS, PARAMS_T, DYN_PARAMS_T>::
-  clearLateralCorridor()
+void FirstOrderDubinsBicycleCostImpl<
+  CLASS_T, NUM_TIMESTEPS, PARAMS_T, DYN_PARAMS_T>::clearLateralCorridor()
 {
   num_lateral_corridor_points_ = 0;
   dataToDevice();
@@ -326,6 +326,16 @@ FirstOrderDubinsBicycleCostImpl<CLASS_T, NUM_TIMESTEPS, PARAMS_T, DYN_PARAMS_T>:
 {
   const int t = timestep < 0 ? 0 : (timestep >= NUM_TIMESTEPS ? NUM_TIMESTEPS - 1 : timestep);
   return vectorLength(x - ref_x_[t], y - ref_y_[t]);
+}
+
+template <class CLASS_T, int NUM_TIMESTEPS, class PARAMS_T, class DYN_PARAMS_T>
+__host__ __device__ float
+FirstOrderDubinsBicycleCostImpl<CLASS_T, NUM_TIMESTEPS, PARAMS_T, DYN_PARAMS_T>::terminalTrackScale(
+  const float velocity) const
+{
+  return fabsf(velocity) < this->params_.stopping_velocity
+           ? this->params_.track_terminal_stopping_scale
+           : this->params_.track_terminal_scale;
 }
 
 template <class CLASS_T, int NUM_TIMESTEPS, class PARAMS_T, class DYN_PARAMS_T>
@@ -681,17 +691,18 @@ autoware::mppi_optimizer::FirstOrderDubinsMppiCostBreakdown FirstOrderDubinsBicy
   const float x_pos = y[static_cast<int>(O::BASELINK_POS_I_X)];
   const float y_pos = y[static_cast<int>(O::BASELINK_POS_I_Y)];
   const float yaw = y[static_cast<int>(O::YAW)];
+  const float vel = y[static_cast<int>(O::TOTAL_VELOCITY)];
+  const float track_terminal_scale = terminalTrackScale(vel);
 
-  result.track = this->params_.track_coeff * computeTrackValue(x_pos, y_pos, timestep) *
-                 this->params_.track_terminal_scale;
+  result.track =
+    this->params_.track_coeff * computeTrackValue(x_pos, y_pos, timestep) * track_terminal_scale;
   result.heading = this->params_.heading_coeff * computeHeadingValue(yaw, timestep) * 10.0F;
   result.lateral_distance =
     this->params_.lateral_distance_coeff * computeLateralDistanceValue(x_pos, y_pos) * 10.0F;
   result.lateral_yaw_error =
     this->params_.lateral_yaw_error_coeff * computeLateralYawErrorValue(x_pos, y_pos, yaw) * 10.0F;
   result.track_center = this->params_.track_center_coeff *
-                        computeTrackCenterValue(x_pos, y_pos, yaw, timestep) *
-                        this->params_.track_terminal_scale;
+                        computeTrackCenterValue(x_pos, y_pos, yaw, timestep) * track_terminal_scale;
   result.corner_buffer = computeCornerBufferCost(x_pos, y_pos, yaw);
   result.drivable_area = egoCrossesDrivableAreaBoundary(x_pos, y_pos, yaw)
                            ? this->params_.drivable_area_crossing_coeff
@@ -810,9 +821,10 @@ FirstOrderDubinsBicycleCostImpl<CLASS_T, NUM_TIMESTEPS, PARAMS_T, DYN_PARAMS_T>:
   const float x_pos = y[static_cast<int>(O::BASELINK_POS_I_X)];
   const float y_pos = y[static_cast<int>(O::BASELINK_POS_I_Y)];
   const float yaw = y[static_cast<int>(O::YAW)];
+  const float vel = y[static_cast<int>(O::TOTAL_VELOCITY)];
+  const float track_terminal_scale = terminalTrackScale(vel);
   const float track_val = computeTrackValue(x_pos, y_pos, NUM_TIMESTEPS - 1);
-  const float track_cost =
-    this->params_.track_coeff * track_val * this->params_.track_terminal_scale;
+  const float track_cost = this->params_.track_coeff * track_val * track_terminal_scale;
   const float heading_cost =
     this->params_.heading_coeff * computeHeadingValue(yaw, NUM_TIMESTEPS - 1) * 10.0F;
   const float lateral_distance_cost =
@@ -824,7 +836,7 @@ FirstOrderDubinsBicycleCostImpl<CLASS_T, NUM_TIMESTEPS, PARAMS_T, DYN_PARAMS_T>:
                                      : 0.0F;
   const float track_center_cost = this->params_.track_center_coeff *
                                   computeTrackCenterValue(x_pos, y_pos, yaw, NUM_TIMESTEPS - 1) *
-                                  this->params_.track_terminal_scale;
+                                  track_terminal_scale;
   const float corner_buffer_cost = computeCornerBufferCost(x_pos, y_pos, yaw);
   int terminal_crash_status = 0;
   const float crash_cost =

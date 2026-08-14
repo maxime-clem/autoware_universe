@@ -139,6 +139,10 @@ void applyCostParam(
     params.track_coeff = value;
   } else if (key == "track_terminal_scale") {
     params.track_terminal_scale = value;
+  } else if (key == "track_terminal_stopping_scale") {
+    params.track_terminal_stopping_scale = value;
+  } else if (key == "stopping_velocity") {
+    params.stopping_velocity = value;
   } else if (key == "heading_coeff") {
     params.heading_coeff = value;
   } else if (key == "lateral_distance_coeff") {
