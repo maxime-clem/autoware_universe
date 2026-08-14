@@ -157,6 +157,8 @@ public:
         out << "corner_buffer_coeff," << cost.corner_buffer_coeff << "\n";
         out << "corner_safe_margin," << cost.corner_safe_margin << "\n";
         out << "boundary_threshold," << cost.boundary_threshold << "\n";
+        out << "lateral_boundary_soft_margin," << cost.lateral_boundary_soft_margin << "\n";
+        out << "lateral_boundary_barrier_weight," << cost.lateral_boundary_barrier_weight << "\n";
         out << "accel_cmd_coeff," << cost.accel_cmd_coeff << "\n";
         out << "steer_cmd_coeff," << cost.steer_cmd_coeff << "\n";
         out << "steer_rate_coeff," << cost.steer_rate_coeff << "\n";

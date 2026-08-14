@@ -212,6 +212,36 @@ TEST_F(TrajectoryValidatorTest, SmoothBarrierCostRampsUpQuadratically)
     1.0E-3F);
 }
 
+TEST_F(TrajectoryValidatorTest, LateralBoundaryBarrierActivatesBeforeHardThreshold)
+{
+  auto params = makeParams();
+  params.boundary_threshold = 0.8F;
+  params.lateral_boundary_soft_margin = 0.2F;
+  params.lateral_boundary_barrier_weight = 2000.0F;
+  params.lateral_distance_coeff = 10.0F;
+  params.max_crash_penalty = 100000.0F;
+  cost_->setParams(params);
+  setStraightReference();
+
+  EXPECT_NEAR(cost_->computeLateralBoundaryCost(0.6F), 0.0F, 1.0E-5F);
+  EXPECT_NEAR(cost_->computeLateralBoundaryCost(0.7F), 20.0F, 1.0E-3F);
+  EXPECT_NEAR(cost_->computeLateralBoundaryCost(0.8F), 80.0F, 1.0E-3F);
+  EXPECT_FLOAT_EQ(cost_->computeLateralBoundaryCost(10.0F), params.max_crash_penalty);
+  EXPECT_FALSE(cost_->exceedsLateralBoundary(0.0F, 0.7F));
+  EXPECT_TRUE(cost_->exceedsLateralBoundary(0.0F, 0.8F));
+
+  TestCost::output_array output = TestCost::output_array::Zero();
+  output(static_cast<int>(OutputIndex::BASELINK_POS_I_Y)) = 0.7F;
+  TestCost::control_array control = TestCost::control_array::Zero();
+  int crash_status = 0;
+  const auto breakdown = cost_->computeRunningCostBreakdown(output, control, 0, &crash_status);
+
+  EXPECT_NEAR(breakdown.lateral_distance, 7.0F, 1.0E-4F);
+  EXPECT_NEAR(breakdown.lateral_boundary, 20.0F, 1.0E-3F);
+  EXPECT_NEAR(breakdown.componentTotal(), breakdown.total, 1.0E-4F);
+  EXPECT_EQ(crash_status, 0);
+}
+
 TEST_F(TrajectoryValidatorTest, SmoothBarrierCostCapsAtFiniteMaximum)
 {
   constexpr float max_penalty = 100000.0F;

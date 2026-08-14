@@ -455,6 +455,17 @@ __host__ __device__ float FirstOrderDubinsBicycleCostImpl<
 template <class CLASS_T, int NUM_TIMESTEPS, class PARAMS_T, class DYN_PARAMS_T>
 __host__ __device__ float FirstOrderDubinsBicycleCostImpl<
   CLASS_T, NUM_TIMESTEPS, PARAMS_T,
+  DYN_PARAMS_T>::computeLateralBoundaryCost(const float lateral_deviation) const
+{
+  const float distance_to_limit = this->params_.boundary_threshold - lateral_deviation;
+  return computeSmoothBarrierCost(
+    distance_to_limit, this->params_.lateral_boundary_soft_margin,
+    this->params_.lateral_boundary_barrier_weight, this->params_.max_crash_penalty);
+}
+
+template <class CLASS_T, int NUM_TIMESTEPS, class PARAMS_T, class DYN_PARAMS_T>
+__host__ __device__ float FirstOrderDubinsBicycleCostImpl<
+  CLASS_T, NUM_TIMESTEPS, PARAMS_T,
   DYN_PARAMS_T>::computeLateralYawErrorValue(const float x, const float y, const float yaw) const
 {
   // Squared yaw error vs the tangent of the closest corridor / reference segment.
@@ -797,8 +808,9 @@ FirstOrderDubinsBicycleCostImpl<CLASS_T, NUM_TIMESTEPS, PARAMS_T, DYN_PARAMS_T>:
   result.speed = this->params_.speed_coeff * vel_diff * vel_diff;
   result.track = this->params_.track_coeff * computeTrackValue(x_pos, y_pos, timestep);
   result.heading = this->params_.heading_coeff * computeHeadingValue(yaw, timestep);
-  result.lateral_distance =
-    this->params_.lateral_distance_coeff * computeLateralDistanceValue(x_pos, y_pos);
+  const float lateral_deviation = computeLateralDistanceValue(x_pos, y_pos);
+  result.lateral_distance = this->params_.lateral_distance_coeff * lateral_deviation;
+  result.lateral_boundary = computeLateralBoundaryCost(lateral_deviation);
   result.lateral_yaw_error =
     this->params_.lateral_yaw_error_coeff * computeLateralYawErrorValue(x_pos, y_pos, yaw);
   result.track_center =
@@ -846,8 +858,9 @@ autoware::mppi_optimizer::FirstOrderDubinsMppiCostBreakdown FirstOrderDubinsBicy
   result.track =
     this->params_.track_coeff * computeTrackValue(x_pos, y_pos, timestep) * track_terminal_scale;
   result.heading = this->params_.heading_coeff * computeHeadingValue(yaw, timestep) * 10.0F;
-  result.lateral_distance =
-    this->params_.lateral_distance_coeff * computeLateralDistanceValue(x_pos, y_pos) * 10.0F;
+  const float lateral_deviation = computeLateralDistanceValue(x_pos, y_pos);
+  result.lateral_distance = this->params_.lateral_distance_coeff * lateral_deviation * 10.0F;
+  result.lateral_boundary = computeLateralBoundaryCost(lateral_deviation);
   result.lateral_yaw_error =
     this->params_.lateral_yaw_error_coeff * computeLateralYawErrorValue(x_pos, y_pos, yaw) * 10.0F;
   result.track_center = this->params_.track_center_coeff *
@@ -881,8 +894,9 @@ FirstOrderDubinsBicycleCostImpl<CLASS_T, NUM_TIMESTEPS, PARAMS_T, DYN_PARAMS_T>:
   const float speed_cost = this->params_.speed_coeff * (vel_diff * vel_diff);
   const float track_cost = this->params_.track_coeff * track_val;
   const float heading_cost = this->params_.heading_coeff * computeHeadingValue(yaw, timestep);
-  const float lateral_distance_cost =
-    this->params_.lateral_distance_coeff * computeLateralDistanceValue(x_pos, y_pos);
+  const float lateral_deviation = computeLateralDistanceValue(x_pos, y_pos);
+  const float lateral_distance_cost = this->params_.lateral_distance_coeff * lateral_deviation;
+  const float lateral_boundary_cost = computeLateralBoundaryCost(lateral_deviation);
   const float lateral_yaw_error_cost =
     this->params_.lateral_yaw_error_coeff * computeLateralYawErrorValue(x_pos, y_pos, yaw);
   const float track_center_cost =
@@ -894,9 +908,9 @@ FirstOrderDubinsBicycleCostImpl<CLASS_T, NUM_TIMESTEPS, PARAMS_T, DYN_PARAMS_T>:
   computeGradualCrashCosts(
     x_pos, y_pos, yaw, timestep, drivable_area_cost, obstacle_cost, road_border_cost);
 
-  return speed_cost + track_cost + heading_cost + lateral_distance_cost + lateral_yaw_error_cost +
-         drivable_area_cost + obstacle_cost + road_border_cost + track_center_cost +
-         corner_buffer_cost;
+  return speed_cost + track_cost + heading_cost + lateral_distance_cost + lateral_boundary_cost +
+         lateral_yaw_error_cost + drivable_area_cost + obstacle_cost + road_border_cost +
+         track_center_cost + corner_buffer_cost;
 }
 
 template <class CLASS_T, int NUM_TIMESTEPS, class PARAMS_T, class DYN_PARAMS_T>
@@ -916,8 +930,9 @@ float FirstOrderDubinsBicycleCostImpl<CLASS_T, NUM_TIMESTEPS, PARAMS_T, DYN_PARA
   const float speed_cost = this->params_.speed_coeff * (vel_diff * vel_diff);
   const float track_cost = this->params_.track_coeff * track_val;
   const float heading_cost = this->params_.heading_coeff * computeHeadingValue(yaw, timestep);
-  const float lateral_distance_cost =
-    this->params_.lateral_distance_coeff * computeLateralDistanceValue(x_pos, y_pos);
+  const float lateral_deviation = computeLateralDistanceValue(x_pos, y_pos);
+  const float lateral_distance_cost = this->params_.lateral_distance_coeff * lateral_deviation;
+  const float lateral_boundary_cost = computeLateralBoundaryCost(lateral_deviation);
   const float lateral_yaw_error_cost =
     this->params_.lateral_yaw_error_coeff * computeLateralYawErrorValue(x_pos, y_pos, yaw);
   const float track_center_cost =
@@ -929,9 +944,9 @@ float FirstOrderDubinsBicycleCostImpl<CLASS_T, NUM_TIMESTEPS, PARAMS_T, DYN_PARA
   computeGradualCrashCosts(
     x_pos, y_pos, yaw, timestep, drivable_area_cost, obstacle_cost, road_border_cost);
 
-  return speed_cost + track_cost + heading_cost + lateral_distance_cost + lateral_yaw_error_cost +
-         drivable_area_cost + obstacle_cost + road_border_cost + track_center_cost +
-         corner_buffer_cost;
+  return speed_cost + track_cost + heading_cost + lateral_distance_cost + lateral_boundary_cost +
+         lateral_yaw_error_cost + drivable_area_cost + obstacle_cost + road_border_cost +
+         track_center_cost + corner_buffer_cost;
 }
 
 template <class CLASS_T, int NUM_TIMESTEPS, class PARAMS_T, class DYN_PARAMS_T>
@@ -975,8 +990,10 @@ FirstOrderDubinsBicycleCostImpl<CLASS_T, NUM_TIMESTEPS, PARAMS_T, DYN_PARAMS_T>:
   const float track_cost = this->params_.track_coeff * track_val * track_terminal_scale;
   const float heading_cost =
     this->params_.heading_coeff * computeHeadingValue(yaw, NUM_TIMESTEPS - 1) * 10.0F;
+  const float lateral_deviation = computeLateralDistanceValue(x_pos, y_pos);
   const float lateral_distance_cost =
-    this->params_.lateral_distance_coeff * computeLateralDistanceValue(x_pos, y_pos) * 10.0F;
+    this->params_.lateral_distance_coeff * lateral_deviation * 10.0F;
+  const float lateral_boundary_cost = computeLateralBoundaryCost(lateral_deviation);
   const float lateral_yaw_error_cost =
     this->params_.lateral_yaw_error_coeff * computeLateralYawErrorValue(x_pos, y_pos, yaw) * 10.0F;
   const float track_center_cost = this->params_.track_center_coeff *
@@ -988,9 +1005,9 @@ FirstOrderDubinsBicycleCostImpl<CLASS_T, NUM_TIMESTEPS, PARAMS_T, DYN_PARAMS_T>:
   float road_border_cost = 0.0F;
   computeGradualCrashCosts(
     x_pos, y_pos, yaw, NUM_TIMESTEPS - 1, drivable_area_cost, obstacle_cost, road_border_cost);
-  return track_cost + heading_cost + lateral_distance_cost + lateral_yaw_error_cost +
-         drivable_area_cost + obstacle_cost + road_border_cost + track_center_cost +
-         corner_buffer_cost;
+  return track_cost + heading_cost + lateral_distance_cost + lateral_boundary_cost +
+         lateral_yaw_error_cost + drivable_area_cost + obstacle_cost + road_border_cost +
+         track_center_cost + corner_buffer_cost;
 }
 
 template <class CLASS_T, int NUM_TIMESTEPS, class PARAMS_T, class DYN_PARAMS_T>

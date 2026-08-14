@@ -46,6 +46,9 @@ struct FirstOrderDubinsBicycleCostParams : public CostParams<2>
   /** Desired minimum distance [m] from each ego corner to drivable-area boundary segments. */
   float corner_safe_margin = 0.3F;
   float boundary_threshold = 0.8F;
+  /** Distance inside boundary_threshold at which the gradual lateral barrier activates. */
+  float lateral_boundary_soft_margin = 0.2F;
+  float lateral_boundary_barrier_weight = 2000.0F;
   /** Beyond bound if signed lateral offset exceeds these (path-left = +); <0 falls back to
    * boundary_threshold. */
   float accel_cmd_coeff = 0.0F;
@@ -150,6 +153,9 @@ public:
    * exceedsLateralBoundary.
    */
   __host__ __device__ float computeLateralDistanceValue(float x, float y) const;
+
+  /** Capped quadratic barrier derived from an already-computed lateral deviation. */
+  __host__ __device__ float computeLateralBoundaryCost(float lateral_deviation) const;
 
   /**
    * Squared yaw error vs the tangent of the closest corridor (or ref_) segment.
