@@ -185,11 +185,11 @@ TEST_F(FirstOrderDubinsMppiInterfaceGpuTest, ProducesFinitePostStepTrajectoryAnd
   }
 }
 
-TEST_F(FirstOrderDubinsMppiInterfaceGpuTest, CompensatesForLongestActuatorDelay)
+TEST_F(FirstOrderDubinsMppiInterfaceGpuTest, AppliesPerChannelActuatorDelayWithoutRefShift)
 {
   FirstOrderDubinsMppiVehicleParams vehicle_params;
-  vehicle_params.acc_time_delay = 0.10F;    // One 0.1 s integration step.
-  vehicle_params.steer_time_delay = 0.24F;  // Two 0.1 s integration steps after quantization.
+  vehicle_params.acc_time_delay = 0.10F;    // N_acc = ceil(0.10/0.1) = 1 at t=0.
+  vehicle_params.steer_time_delay = 0.24F;  // N_steer = ceil(0.24/0.1) = 3 at t=0.
   interface_->setVehicleParams(vehicle_params);
 
   const auto input = makeStraightTrajectory(85U);
@@ -198,13 +198,12 @@ TEST_F(FirstOrderDubinsMppiInterfaceGpuTest, CompensatesForLongestActuatorDelay)
   ASSERT_TRUE(interface_->isInitialized());
   ASSERT_EQ(result.trajectory.points.size(), input.points.size());
 
-  // Delay compensation advances the 2 m/s initial state by two steps to x=0.4. The first
-  // published trajectory point is the following MPPI post-step state at x=0.6, aligned with
-  // reference point 2.
+  // Delay is applied in dynamics from the measured ego IC (no host pre-roll / ref shift),
+  // so the first published post-step state stays near the undelayed one-step motion.
   const auto & first = result.trajectory.points.front();
-  EXPECT_NEAR(first.pose.position.x, input.points[2].pose.position.x, 1.0E-5);
-  EXPECT_NEAR(first.pose.position.y, input.points[2].pose.position.y, 1.0E-5);
-  EXPECT_NEAR(first.longitudinal_velocity_mps, input.points[2].longitudinal_velocity_mps, 1.0E-5F);
+  EXPECT_NEAR(first.pose.position.x, 0.2, 1.0E-5);
+  EXPECT_NEAR(first.pose.position.y, 0.0, 1.0E-5);
+  EXPECT_NEAR(first.longitudinal_velocity_mps, 2.0F, 1.0E-5F);
 }
 
 TEST_F(FirstOrderDubinsMppiInterfaceGpuTest, RejectsAtInclusiveLateralBoundaryThreshold)

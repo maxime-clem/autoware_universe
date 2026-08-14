@@ -317,7 +317,7 @@ TEST_F(TrajectoryValidatorTest, LateralCorridorIncludesGeometryBeforeDelayShifte
   near_ego.velocity = 1.0F;
   near_ego.steering = 0.0F;
 
-  // Without full corridor: far from the delay-shifted path → crash.
+  // Without full corridor: far from the tracking path → crash.
   EXPECT_FALSE(detail::validateOptimizedTrajectory(*cost_, {near_ego}).isValid());
 
   // Full DP corridor along y=0.4 from x=0.. includes ego → valid.

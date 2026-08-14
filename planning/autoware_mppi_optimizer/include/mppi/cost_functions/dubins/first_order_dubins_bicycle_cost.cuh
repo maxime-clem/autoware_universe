@@ -71,7 +71,7 @@ public:
   static constexpr int kMaxDrivablePolygonVertices = 1024;
   static constexpr int kMaxRoadBorderSegments = 256;
   static constexpr int kMaxDrivableAreaSegments = 256;
-  /** Full diffusion-path polyline for spatial lateral / crash (not delay-shifted). */
+  /** Full diffusion-path polyline for spatial lateral / crash. */
   static constexpr int kMaxLateralCorridorPoints = 256;
 
   using PARENT_CLASS = Cost<CLASS_T, PARAMS_T, DYN_PARAMS_T>;

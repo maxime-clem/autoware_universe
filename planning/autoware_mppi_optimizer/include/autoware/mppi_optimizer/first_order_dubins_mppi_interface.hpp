@@ -276,8 +276,9 @@ public:
   void setControlHistory(float accel_tm2, float steer_tm2, float accel_tm1, float steer_tm1);
 
   /**
-   * @brief Seed the input-delay FIFO with already-sent (accel, steer) commands (oldest first).
-   *        Length should equal the quantized delay steps; empty clears / disables seeding.
+   * @brief Seed per-channel input-delay FIFOs with already-sent commands (oldest first).
+   *        Accel uses the first N_acc samples; steer uses the first N_steer samples.
+   *        Empty clears / disables forced seeding (falls back to measured hold).
    */
   void setInputDelayBuffer(
     const std::vector<float> & accel_cmd, const std::vector<float> & steer_cmd);
