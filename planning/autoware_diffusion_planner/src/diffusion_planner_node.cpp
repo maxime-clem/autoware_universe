@@ -96,6 +96,8 @@ DiffusionPlanner::DiffusionPlanner(const rclcpp::NodeOptions & options)
     this->create_publisher<Trajectory>("~/debug/mppi/nominal_control_trajectory", 1);
   pub_mppi_optimized_trajectory_ =
     this->create_publisher<Trajectory>("~/debug/mppi/optimized_trajectory", 1);
+  pub_mppi_nominal_trajectory_ =
+    this->create_publisher<Trajectory>("~/debug/mppi/nominal_trajectory", 1);
   pub_mppi_markers_ = this->create_publisher<MarkerArray>("~/debug/mppi/markers", 1);
   // Latched so late-joining debug tools see the current enable state immediately.
   pub_mppi_enabled_ = this->create_publisher<std_msgs::msg::Bool>(
@@ -817,10 +819,12 @@ void DiffusionPlanner::publish_mppi_debug(
   auto reference = debug.reference_trajectory;
   auto nominal_control = debug.reference_trajectory;
   auto optimized = debug.optimized_trajectory;
+  auto nominal = debug.nominal_trajectory;
   reference.header.stamp = stamp;
   reference.header.frame_id = frame_id;
   nominal_control.header = reference.header;
   optimized.header = reference.header;
+  nominal.header = reference.header;
 
   const auto & profile = debug.nominal_control_profile;
   const std::size_t nominal_control_size = std::min(
@@ -835,6 +839,7 @@ void DiffusionPlanner::publish_mppi_debug(
   pub_mppi_reference_trajectory_->publish(reference);
   pub_mppi_nominal_control_trajectory_->publish(nominal_control);
   pub_mppi_optimized_trajectory_->publish(optimized);
+  pub_mppi_nominal_trajectory_->publish(nominal);
 }
 
 void DiffusionPlanner::publish_mppi_cost_diagnostics(

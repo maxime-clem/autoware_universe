@@ -38,6 +38,10 @@ struct FirstOrderDubinsMppiCostParams
   float accel_cmd_coeff{0.0F};
   float steer_cmd_coeff{0.0F};
   float steer_rate_coeff{0.0F};
+  /** Gaussian sampling std-dev on acceleration command [m/s^2] around u_nom. */
+  float accel_cmd_std_dev{0.35F};
+  /** Gaussian sampling std-dev on steer command [rad] around u_nom. */
+  float steer_cmd_std_dev{0.024F};
   /** Spatial window used only when deriving a cold-start nominal steer from the reference. */
   float nominal_curvature_min_chord_length_m{1.5F};
   float lateral_acceleration_coeff{300.0F};

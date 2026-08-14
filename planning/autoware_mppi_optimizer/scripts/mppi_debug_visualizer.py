@@ -22,12 +22,16 @@ Offline logs (written when enable_debug_trajectory_log:=true):
   <log_dir>/000000_reference.csv
   <log_dir>/000000_optimized.csv
   <log_dir>/000000_ego.csv
+  <log_dir>/000000_nominal.csv   (u_nom warm-start accel/steer cmds)
   ...
 
 Trajectory CSV columns:
   t_from_start_s,x,y,z,yaw,v,a,steer,steer_rate
 Ego CSV columns:
   x,y,z,yaw,v,accel,steer
+Nominal CSV columns:
+  t_idx,accel_cmd,steer_cmd
+(Offline XY overlay rolls these out from ego with FirstOrderDubinsBicycle.)
 
 Retune also writes <out_dir>/NNNNNN_costs.csv:
   rollout_index,raw_cost,normalized_weight
@@ -129,6 +133,8 @@ DEFAULT_PARAMS: Dict[str, float] = {
     "accel_cmd_coeff": 50.0,
     "steer_cmd_coeff": 250.0,
     "steer_rate_coeff": 100000.0,
+    "accel_cmd_std_dev": 0.35,
+    "steer_cmd_std_dev": 0.024,
     "nominal_curvature_min_chord_length_m": 1.5,
     "obstacle_collision_margin": 0.2,
     "road_border_collision_margin": 0.3,
@@ -155,6 +161,8 @@ SLIDER_SPECS: List[Tuple[str, float, float]] = [
     ("accel_cmd_coeff", 0.0, 2000.0),
     ("steer_cmd_coeff", 0.0, 5000.0),
     ("steer_rate_coeff", 0.0, 500000.0),
+    ("accel_cmd_std_dev", 0.0, 2.0),
+    ("steer_cmd_std_dev", 0.0, 0.2),
     ("nominal_curvature_min_chord_length_m", 0.0, 5.0),
     ("boundary_threshold", 0.1, 5.0),
     ("obstacle_collision_margin", 0.0, 2.0),
@@ -262,18 +270,25 @@ class MppiDebugFrame:
     reference_xy: Optional[Tuple[List[float], List[float]]] = None
     optimized_xy: Optional[Tuple[List[float], List[float]]] = None
     retuned_xy: Optional[Tuple[List[float], List[float]]] = None
+    # Open-loop rollout of logged u_nom from ego (offline).
+    nominal_xy: Optional[Tuple[List[float], List[float]]] = None
     reference_heading: List[float] = field(default_factory=list)
     optimized_heading: List[float] = field(default_factory=list)
     retuned_heading: List[float] = field(default_factory=list)
+    nominal_heading: List[float] = field(default_factory=list)
     reference_vel: List[float] = field(default_factory=list)
     optimized_vel: List[float] = field(default_factory=list)
     retuned_vel: List[float] = field(default_factory=list)
+    nominal_vel: List[float] = field(default_factory=list)
     reference_accel: List[float] = field(default_factory=list)
     optimized_accel: List[float] = field(default_factory=list)
     retuned_accel: List[float] = field(default_factory=list)
+    # Nominal panels use accel_cmd / steer_cmd from *_nominal.csv.
+    nominal_accel: List[float] = field(default_factory=list)
     reference_steer: List[float] = field(default_factory=list)
     optimized_steer: List[float] = field(default_factory=list)
     retuned_steer: List[float] = field(default_factory=list)
+    nominal_steer: List[float] = field(default_factory=list)
     reference_steer_rate: List[float] = field(default_factory=list)
     optimized_steer_rate: List[float] = field(default_factory=list)
     retuned_steer_rate: List[float] = field(default_factory=list)
@@ -320,6 +335,127 @@ def load_trajectory_csv(path: Path) -> LoadedTrajectory:
             traj.accel.append(float(row["a"]))
             traj.steer.append(float(row["steer"]))
             traj.steer_rate.append(float(row["steer_rate"]))
+    return traj
+
+
+@dataclass
+class LoadedEgoState:
+    x: float = 0.0
+    y: float = 0.0
+    yaw: float = 0.0
+    v: float = 0.0
+    accel: float = 0.0
+    steer: float = 0.0
+
+
+@dataclass
+class LoadedNominalControl:
+    accel_cmd: List[float] = field(default_factory=list)
+    steer_cmd: List[float] = field(default_factory=list)
+
+
+def load_ego_csv(path: Path) -> Optional[LoadedEgoState]:
+    if not path.is_file():
+        return None
+    with path.open(newline="") as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            try:
+                return LoadedEgoState(
+                    x=float(row["x"]),
+                    y=float(row["y"]),
+                    yaw=float(row["yaw"]),
+                    v=float(row["v"]),
+                    accel=float(row["accel"]),
+                    steer=float(row["steer"]),
+                )
+            except (KeyError, ValueError, TypeError):
+                continue
+    return None
+
+
+def load_nominal_csv(path: Path) -> LoadedNominalControl:
+    nominal = LoadedNominalControl()
+    if not path.is_file():
+        return nominal
+    with path.open(newline="") as f:
+        reader = csv.DictReader(f)
+        for row in reader:
+            try:
+                nominal.accel_cmd.append(float(row["accel_cmd"]))
+                nominal.steer_cmd.append(float(row["steer_cmd"]))
+            except (KeyError, ValueError, TypeError):
+                continue
+    return nominal
+
+
+def _normalize_angle(yaw: float) -> float:
+    while yaw > math.pi:
+        yaw -= 2.0 * math.pi
+    while yaw < -math.pi:
+        yaw += 2.0 * math.pi
+    return yaw
+
+
+def rollout_nominal_trajectory(
+    ego: LoadedEgoState,
+    nominal: LoadedNominalControl,
+    *,
+    wheel_base: float,
+    accel_time_constant: float,
+    steer_time_constant: float,
+    max_steer_angle: float,
+    max_steer_rate: float,
+    min_accel: float = -6.0,
+    max_accel: float = 4.0,
+    dt: float = MPPI_DT,
+) -> LoadedTrajectory:
+    """Open-loop FirstOrderDubinsBicycle rollout; returns post-step states (same as logged MPPI)."""
+    traj = LoadedTrajectory()
+    n = min(len(nominal.accel_cmd), len(nominal.steer_cmd))
+    if n <= 0 or wheel_base <= 1.0e-6:
+        return traj
+
+    x = float(ego.x)
+    y = float(ego.y)
+    yaw = float(ego.yaw)
+    v = float(ego.v)
+    accel = float(ego.accel)
+    steer = float(ego.steer)
+    accel_tau = max(float(accel_time_constant), 1.0e-4)
+    steer_tau = max(float(steer_time_constant), 1.0e-4)
+    wb = float(wheel_base)
+    max_delta = float(max_steer_angle)
+    max_rate = float(max_steer_rate)
+
+    for i in range(n):
+        accel_cmd = float(nominal.accel_cmd[i])
+        steer_cmd = float(nominal.steer_cmd[i])
+
+        accel_dot = (accel_cmd - accel) / accel_tau
+        steer_dot = (steer_cmd - steer) / steer_tau
+        steer_dot = max(-max_rate, min(max_rate, steer_dot))
+        yaw_dot = (v / wb) * math.tan(steer)
+        x_dot = v * math.cos(yaw)
+        y_dot = v * math.sin(yaw)
+        v_dot = accel
+
+        x = x + x_dot * dt
+        y = y + y_dot * dt
+        yaw = _normalize_angle(yaw + yaw_dot * dt)
+        v = v + v_dot * dt
+        steer = max(-max_delta, min(max_delta, steer + steer_dot * dt))
+        accel = max(min_accel, min(max_accel, accel + accel_dot * dt))
+
+        traj.x.append(x)
+        traj.y.append(y)
+        traj.heading.append(yaw)
+        traj.vel.append(v)
+        # Panels compare nominal *commands* against logged / retuned sequences.
+        traj.accel.append(accel_cmd)
+        traj.steer.append(steer_cmd)
+        traj.steer_rate.append(steer_dot)
+
     return traj
 
 
@@ -595,6 +731,7 @@ def frame_from_loaded(
     optimized: LoadedTrajectory,
     stamp_text: str,
     retuned: Optional[LoadedTrajectory] = None,
+    nominal: Optional[LoadedTrajectory] = None,
     costs: Optional[LoadedCostDistribution] = None,
     rollouts: Optional[List[Tuple[float, List[float], List[float], bool]]] = None,
     steer_time_constant: float = VEHICLE_PARAMS_DEFAULT_STEER_TIME_CONSTANT,
@@ -607,18 +744,23 @@ def frame_from_loaded(
         reference_xy=(reference.x, reference.y) if reference.x else None,
         optimized_xy=(optimized.x, optimized.y) if optimized.x else None,
         retuned_xy=(retuned.x, retuned.y) if retuned and retuned.x else None,
+        nominal_xy=(nominal.x, nominal.y) if nominal and nominal.x else None,
         reference_heading=reference.heading,
         optimized_heading=optimized.heading,
         retuned_heading=retuned.heading if retuned else [],
+        nominal_heading=nominal.heading if nominal else [],
         reference_vel=reference.vel,
         optimized_vel=optimized.vel,
         retuned_vel=retuned.vel if retuned else [],
+        nominal_vel=nominal.vel if nominal else [],
         reference_accel=reference.accel,
         optimized_accel=optimized.accel,
         retuned_accel=retuned.accel if retuned else [],
+        nominal_accel=nominal.accel if nominal else [],
         reference_steer=reference.steer,
         optimized_steer=optimized.steer,
         retuned_steer=retuned.steer if retuned else [],
+        nominal_steer=nominal.steer if nominal else [],
         reference_steer_rate=reference.steer_rate,
         optimized_steer_rate=optimized.steer_rate,
         retuned_steer_rate=retuned.steer_rate if retuned else [],
@@ -825,16 +967,20 @@ def draw_frame(axes, frame: MppiDebugFrame) -> None:
     lengths = [len(frame.reference_vel), len(frame.optimized_vel)]
     if frame.retuned_vel:
         lengths.append(len(frame.retuned_vel))
+    if frame.nominal_vel:
+        lengths.append(len(frame.nominal_vel))
     if frame.reference_xy:
         lengths.append(len(frame.reference_xy[0]))
     if frame.optimized_xy:
         lengths.append(len(frame.optimized_xy[0]))
     if frame.retuned_xy:
         lengths.append(len(frame.retuned_xy[0]))
+    if frame.nominal_xy:
+        lengths.append(len(frame.nominal_xy[0]))
     n_compare = min(n for n in lengths if n > 0) if any(lengths) else 0
 
     ax_xy.clear()
-    ax_xy.set_title("Trajectory (diffusion ref vs MPPI)")
+    ax_xy.set_title("Trajectory (diffusion ref vs MPPI / nominal)")
     ax_xy.set_xlabel("x [m]")
     ax_xy.set_ylabel("y [m]")
     ax_xy.grid(True)
@@ -907,6 +1053,8 @@ def draw_frame(axes, frame: MppiDebugFrame) -> None:
                 seg_color = (0.35 + 0.65 * t, 0.05, 0.05)
             elif color == "cyan":
                 seg_color = (0.05, 0.45 + 0.40 * t, 0.50 + 0.35 * t)
+            elif color == "orange":
+                seg_color = (0.75 + 0.25 * t, 0.35 + 0.25 * t, 0.05)
             else:
                 seg_color = color
             ax.plot(
@@ -947,6 +1095,17 @@ def draw_frame(axes, frame: MppiDebugFrame) -> None:
             linestyle="--",
             linewidth=2,
             label="diffusion reference",
+            zorder=3,
+        )
+    if frame.nominal_xy and len(frame.nominal_xy[0]) > 0:
+        _plot_xy_path(
+            ax_xy,
+            frame.nominal_xy[0],
+            frame.nominal_xy[1],
+            color="orange",
+            linestyle="-.",
+            linewidth=2.0,
+            label="nominal (u_nom rollout)",
             zorder=3,
         )
     if frame.optimized_xy and len(frame.optimized_xy[0]) > 0:
@@ -1011,6 +1170,7 @@ def draw_frame(axes, frame: MppiDebugFrame) -> None:
         or (frame.reference_xy and len(frame.reference_xy[0]) > 0)
         or (frame.optimized_xy and len(frame.optimized_xy[0]) > 0)
         or (frame.retuned_xy and len(frame.retuned_xy[0]) > 0)
+        or (frame.nominal_xy and len(frame.nominal_xy[0]) > 0)
     ):
         ax_xy.relim()
         ax_xy.autoscale_view()
@@ -1106,6 +1266,15 @@ def draw_frame(axes, frame: MppiDebugFrame) -> None:
     ax_vel.grid(True)
     if n_compare > 0:
         ax_vel.plot(idx, frame.reference_vel[:n_compare], "c--", linewidth=2, label="diffusion")
+        if frame.nominal_vel:
+            ax_vel.plot(
+                idx,
+                frame.nominal_vel[:n_compare],
+                color="darkorange",
+                linestyle="-.",
+                linewidth=2,
+                label="nominal",
+            )
         ax_vel.plot(idx, frame.optimized_vel[:n_compare], "r-", linewidth=2, label="MPPI logged")
         if frame.retuned_vel:
             ax_vel.plot(
@@ -1131,6 +1300,15 @@ def draw_frame(axes, frame: MppiDebugFrame) -> None:
             linewidth=2,
             label="diffusion accel",
         )
+        if frame.nominal_accel:
+            ax_accel.plot(
+                idx,
+                frame.nominal_accel[:n_compare],
+                color="darkorange",
+                linestyle="-.",
+                linewidth=2,
+                label="nominal u_accel",
+            )
         ax_accel.plot(
             idx,
             frame.optimized_accel[:n_compare],
@@ -1174,17 +1352,32 @@ def draw_frame(axes, frame: MppiDebugFrame) -> None:
     elif frame.retuned_steer:
         cmd_seq = list(frame.retuned_steer)
         cmd_label = "δ_cmd (retuned)"
+    elif frame.nominal_steer:
+        cmd_seq = list(frame.nominal_steer)
+        cmd_label = "δ_cmd (nominal)"
     if cmd_seq:
         idx_cmd = list(range(len(cmd_seq)))
         (h_cmd,) = ax_steer_cmd.plot(
             idx_cmd,
             cmd_seq,
-            color="tab:orange",
+            color="tab:orange" if cmd_label != "δ_cmd (nominal)" else "darkorange",
+            linestyle="-" if cmd_label != "δ_cmd (nominal)" else "-.",
             linewidth=2,
             label=cmd_label,
         )
         cmd_handles.append(h_cmd)
         cmd_labels.append(cmd_label)
+        if frame.nominal_steer and cmd_label != "δ_cmd (nominal)":
+            (h_nom,) = ax_steer_cmd.plot(
+                list(range(len(frame.nominal_steer))),
+                frame.nominal_steer,
+                color="darkorange",
+                linestyle="-.",
+                linewidth=2,
+                label="δ_cmd (nominal)",
+            )
+            cmd_handles.append(h_nom)
+            cmd_labels.append("δ_cmd (nominal)")
         if frame.retuned_steer and frame.optimized_steer:
             (h_ret,) = ax_steer_cmd.plot(
                 list(range(len(frame.retuned_steer))),
@@ -1764,6 +1957,23 @@ def load_vehicle_from_log(
     )
 
 
+def load_dynamics_from_log(log_dir: Path) -> Dict[str, float]:
+    """Dynamics knobs used to roll out *_nominal.csv (FirstOrderDubinsBicycle)."""
+    logged = load_key_value_csv(log_dir / "vehicle_params.csv")
+    vel_rate = float(logged.get("vel_rate_lim", 4.0))
+    return {
+        "wheel_base": float(logged.get("wheel_base", VEHICLE_PARAMS_DEFAULT_WHEEL_BASE)),
+        "accel_time_constant": float(logged.get("acc_time_constant", 0.15)),
+        "steer_time_constant": float(
+            logged.get("steer_time_constant", VEHICLE_PARAMS_DEFAULT_STEER_TIME_CONSTANT)
+        ),
+        "max_steer_angle": float(logged.get("max_steer_angle", 0.45)),
+        "max_steer_rate": float(logged.get("steer_rate_lim", 3.0)),
+        "min_accel": -abs(vel_rate),
+        "max_accel": abs(vel_rate),
+    }
+
+
 def find_retune_binary(explicit: str = "") -> Path:
     if explicit:
         return Path(explicit)
@@ -1813,6 +2023,7 @@ class MppiDebugVisualizer(Node):
         self._frame = MppiDebugFrame()
         self._logged_reference = False
         self._logged_optimized = False
+        self._logged_nominal = False
         self._logged_measured_steer = False
         self._logged_cmd_steer = False
         self._logged_mppi_enabled = False
@@ -1851,6 +2062,9 @@ class MppiDebugVisualizer(Node):
         self.create_subscription(
             Trajectory, f"{prefix}/optimized_trajectory", self.on_optimized_trajectory, qos
         )
+        self.create_subscription(
+            Trajectory, f"{prefix}/nominal_trajectory", self.on_nominal_trajectory, qos
+        )
         self.create_subscription(Bool, f"{prefix}/enabled", self.on_mppi_enabled, enabled_qos)
         self.create_subscription(
             SteeringReport, measured_steering_topic, self.on_measured_steering, measured_qos
@@ -1866,6 +2080,7 @@ class MppiDebugVisualizer(Node):
         self.get_logger().info("MPPI debug visualizer started (live).")
         self.get_logger().info(f"Reference: {prefix}/reference_trajectory")
         self.get_logger().info(f"Optimized: {prefix}/optimized_trajectory")
+        self.get_logger().info(f"Nominal: {prefix}/nominal_trajectory")
         self.get_logger().info(f"Enabled flag: {prefix}/enabled")
         self.get_logger().info(f"Measured steer: {measured_steering_topic}")
         self.get_logger().info(
@@ -2019,6 +2234,21 @@ class MppiDebugVisualizer(Node):
                 f"plotting last {MEASURED_STEER_HISTORY_S:.0f}s on the history panel."
             )
 
+    def on_nominal_trajectory(self, msg: Trajectory) -> None:
+        # Same field mapping as optimized: a / front_wheel_angle carry u_nom cmds.
+        processed = self._process_trajectory(msg, is_optimized=True)
+        with self._lock:
+            self._frame.nominal_xy = processed.reference_xy
+            self._frame.nominal_heading = processed.reference_heading
+            self._frame.nominal_vel = processed.reference_vel
+            self._frame.nominal_accel = processed.reference_accel
+            self._frame.nominal_steer = list(processed.reference_steer)
+            if not self._frame.stamp_text:
+                self._frame.stamp_text = processed.stamp_text
+        if not self._logged_nominal and msg.points:
+            self._logged_nominal = True
+            self.get_logger().info(f"Receiving nominal_trajectory ({len(msg.points)} points).")
+
     def on_mppi_enabled(self, msg: Bool) -> None:
         with self._lock:
             self._frame.mppi_enabled = bool(msg.data)
@@ -2060,14 +2290,19 @@ class MppiDebugVisualizer(Node):
             frame = MppiDebugFrame(
                 reference_xy=self._frame.reference_xy,
                 optimized_xy=self._frame.optimized_xy,
+                nominal_xy=self._frame.nominal_xy,
                 reference_heading=list(self._frame.reference_heading),
                 optimized_heading=list(self._frame.optimized_heading),
+                nominal_heading=list(self._frame.nominal_heading),
                 reference_vel=list(self._frame.reference_vel),
                 optimized_vel=list(self._frame.optimized_vel),
+                nominal_vel=list(self._frame.nominal_vel),
                 reference_accel=list(self._frame.reference_accel),
                 optimized_accel=list(self._frame.optimized_accel),
+                nominal_accel=list(self._frame.nominal_accel),
                 reference_steer=list(self._frame.reference_steer),
                 optimized_steer=list(self._frame.optimized_steer),
+                nominal_steer=list(self._frame.nominal_steer),
                 reference_steer_rate=list(self._frame.reference_steer_rate),
                 optimized_steer_rate=[],
                 measured_steer=self._frame.measured_steer,
@@ -2151,6 +2386,9 @@ class OfflineLogVisualizer:
             float(steer_time_constant if steer_time_constant is not None else logged_steer_tau),
             1.0e-4,
         )
+        self._dynamics = load_dynamics_from_log(log_dir)
+        self._dynamics["wheel_base"] = float(self._wheel_base)
+        self._dynamics["steer_time_constant"] = float(self._steer_time_constant)
         self._status = "Ready"
         if enable_retune and not (log_dir / "000000_ego.csv").is_file():
             # Any frame's ego file; check first available frame.
@@ -2223,6 +2461,13 @@ class OfflineLogVisualizer:
         tag = f"{frame_id:06d}"
         reference = load_trajectory_csv(self._log_dir / f"{tag}_reference.csv")
         optimized = load_trajectory_csv(self._log_dir / f"{tag}_optimized.csv")
+        nominal = None
+        ego = load_ego_csv(self._log_dir / f"{tag}_ego.csv")
+        nominal_cmds = load_nominal_csv(self._log_dir / f"{tag}_nominal.csv")
+        if ego is not None and nominal_cmds.accel_cmd:
+            rolled = rollout_nominal_trajectory(ego, nominal_cmds, **self._dynamics)
+            if rolled.x:
+                nominal = rolled
         retuned = None
         costs = None
         rollouts = None
@@ -2248,6 +2493,7 @@ class OfflineLogVisualizer:
             optimized,
             stamp_text=stamp,
             retuned=retuned,
+            nominal=nominal,
             costs=costs,
             rollouts=rollouts,
             steer_time_constant=self._steer_time_constant,
@@ -2510,7 +2756,7 @@ def parse_args(argv: List[str]) -> argparse.Namespace:
     parser.add_argument(
         "--topic-prefix",
         default=default_prefix,
-        help="Prefix for ~/debug/mppi/{reference,optimized}_trajectory and enabled topics",
+        help="Prefix for ~/debug/mppi/{reference,optimized,nominal}_trajectory and enabled topics",
     )
     parser.add_argument(
         "--log-dir",

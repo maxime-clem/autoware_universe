@@ -269,6 +269,60 @@ void checkCuda(const char * where)
   }
 }
 
+/** Open-loop integrate logged u_nom from the optimization IC; post-step states aligned to DP. */
+Trajectory buildNominalTrajectory(
+  DYN & model, const DYN::state_array & x0, const Trajectory & input,
+  const std::vector<float> & accel_cmd, const std::vector<float> & steer_cmd)
+{
+  const size_t n = std::min(
+    {input.points.size(), accel_cmd.size(), steer_cmd.size(),
+     static_cast<size_t>(std::max(0, kMppiHorizon))});
+  if (n == 0U) {
+    return Trajectory{};
+  }
+
+  const int pos_x_idx = static_cast<int>(FirstOrderDubinsBicycleParams::StateIndex::POS_X);
+  const int pos_y_idx = static_cast<int>(FirstOrderDubinsBicycleParams::StateIndex::POS_Y);
+  const int yaw_idx = static_cast<int>(FirstOrderDubinsBicycleParams::StateIndex::YAW);
+  const int vel_x_idx = static_cast<int>(FirstOrderDubinsBicycleParams::StateIndex::VEL_X);
+  const int accel_idx =
+    static_cast<int>(FirstOrderDubinsBicycleParams::ControlIndex::ACCELERATION_CMD);
+  const int steer_idx = static_cast<int>(FirstOrderDubinsBicycleParams::ControlIndex::STEER_CMD);
+
+  std::vector<detail::OptimizedState> states;
+  std::vector<FirstOrderDubinsMppiControl> controls;
+  states.reserve(n);
+  controls.reserve(n);
+
+  DYN::state_array x = x0;
+  DYN::state_array x_next = model.getZeroState();
+  DYN::state_array xdot = model.getZeroState();
+  DYN::output_array y = DYN::output_array::Zero();
+  DYN::control_array u = DYN::control_array::Zero();
+
+  for (size_t i = 0; i < n; ++i) {
+    FirstOrderDubinsMppiControl cmd;
+    cmd.accel_cmd = accel_cmd[i];
+    cmd.steer_cmd = steer_cmd[i];
+    u(accel_idx) = cmd.accel_cmd;
+    u(steer_idx) = cmd.steer_cmd;
+    model.enforceConstraints(x, u);
+    model.step(x, x_next, xdot, u, y, static_cast<float>(i), kDt);
+    x = x_next;
+
+    detail::OptimizedState state;
+    state.x = x(pos_x_idx);
+    state.y = x(pos_y_idx);
+    state.yaw = x(yaw_idx);
+    state.velocity = x(vel_x_idx);
+    // Publish steer_cmd (not tire angle) so the live viz δ_cmd panel shows u_nom.
+    state.steering = cmd.steer_cmd;
+    states.push_back(state);
+    controls.push_back(cmd);
+  }
+  return detail::buildOptimizedTrajectory(input, states, controls);
+}
+
 void replayRolloutPoints(
   DYN & model, const DYN::state_array & x0, const float * controls, const int horizon,
   const float dt, std::vector<std::pair<float, float>> & points)
@@ -606,17 +660,9 @@ struct FirstOrderDubinsMppiInterface::Impl
 
     SAMPLER::SAMPLING_PARAMS_T sp{};
     sp.std_dev[static_cast<int>(FirstOrderDubinsBicycleParams::ControlIndex::ACCELERATION_CMD)] =
-      0.35F;
-    // Steer exploration: keep modest. Large i.i.d. Gaussian std injects high-frequency δ_cmd
-    // jitter into the importance-weighted average. Lateral reach comes from optimizing around
-    // a zero (or explicit) steer seed, not from huge white noise.
-    // Historical: 0.001 * (L/0.32) ≈ 0.015 rad on j6; 0.01 * (L/0.32) ≈ 0.15 rad was too noisy.
-    constexpr float kReferenceWheelBase = 0.32F;
-    constexpr float kReferenceSteerStd = 2e-3F;
-    const float steer_std = kReferenceSteerStd * (vehicle_params.wheel_base / kReferenceWheelBase);
-
+      user_cost_params_.accel_cmd_std_dev;
     sp.std_dev[static_cast<int>(FirstOrderDubinsBicycleParams::ControlIndex::STEER_CMD)] =
-      steer_std;
+      user_cost_params_.steer_cmd_std_dev;
     sp.sum_strides = std::max(32, (kNumRollouts + 1023) / 1024);
 #ifdef USE_COLOURED_NOISE
     // Power-law PSD exponents (0 = white, 1 = pink, 2 = brown). Pink steer keeps lateral
@@ -651,13 +697,15 @@ struct FirstOrderDubinsMppiInterface::Impl
     RCLCPP_INFO(
       mppiLogger(),
       "MPPI GPU initialized (horizon=%d, rollouts=%d, dt=%.2f, lambda=%.1f, "
-      "wheel_base=%.2f, max_steer=%.2f, steer_std=%.3f, acc_tau=%.2f, steer_tau=%.2f, "
+      "wheel_base=%.2f, max_steer=%.2f, accel_std=%.3f, steer_std=%.3f, acc_tau=%.2f, "
+      "steer_tau=%.2f, "
       "acc_delay=%.3f (%d steps), steer_delay=%.3f (%d steps), delay_comp_steps=%d, "
       "steer_rate_lim=%.2f, vel_rate_lim=%.2f, ego=%.2fx%.2f, axle_to_center=%.2f, "
       "desired_speed=%.2f, boundary_threshold=%.2f, obs_margin=%.2f, road_border_margin=%.2f, "
       "drivable_area_coeff=%.2f)",
       kMppiHorizon, kNumRollouts, kDt, user_cost_params_.lambda, vehicle_params.wheel_base,
-      vehicle_params.max_steer_angle, steer_std, vehicle_params.acc_time_constant,
+      vehicle_params.max_steer_angle, user_cost_params_.accel_cmd_std_dev,
+      user_cost_params_.steer_cmd_std_dev, vehicle_params.acc_time_constant,
       vehicle_params.steer_time_constant, vehicle_params.acc_time_delay, acc_delay_steps,
       vehicle_params.steer_time_delay, steer_delay_steps, delay_steps,
       vehicle_params.steer_rate_lim, vehicle_params.vel_rate_lim, vehicle_params.ego_length,
@@ -1417,10 +1465,10 @@ FirstOrderDubinsMppiOptimizationResult FirstOrderDubinsMppiInterface::optimizeTr
 
   result.trajectory = output;
   result.debug.reference_trajectory = input;
-  result.debug.optimized_trajectory = output;
-  result.debug.nominal_control_profile.time_step_s = kDt;
-  result.debug.nominal_control_profile.acceleration_commands_mps2 = impl_->logged_nominal_accel;
-  result.debug.nominal_control_profile.steering_commands_rad = impl_->logged_nominal_steer;
+  result.debug.optimized_trajectory = output;commands_rad = impl_->logged_nominal_steer;
+  result.debug.nominal_trajectory = buildNominalTrajectory(
+    impl_->model, x_at_optimization, input, impl_->logged_nominal_accel,
+    impl_->logged_nominal_steer);
   result.debug.validation = validation;
   if (impl_->enable_rollout_visualization) {
     buildRolloutVisualization(
@@ -1432,8 +1480,8 @@ FirstOrderDubinsMppiOptimizationResult FirstOrderDubinsMppiInterface::optimizeTr
     result.debug.rollouts.clear();
   }
   if (n_state > 0 && n_ctrl > 0) {
-    result.debug.cost_breakdown = reconstructSelectedTrajectoryCost(
-      impl_->cost, impl_->model, state_trajectory, u_opt_traj);
+    result.debug.cost_breakdown =
+      reconstructSelectedTrajectoryCost(impl_->cost, impl_->model, state_trajectory, u_opt_traj);
   }
 
   MppiDebugEgoState ego;
@@ -1479,6 +1527,7 @@ FirstOrderDubinsMppiOptimizationResult FirstOrderDubinsMppiInterface::optimizeTr
     result.trajectory = input;
     result.debug.reference_trajectory = input;
     result.debug.optimized_trajectory = input;
+    // Keep nominal_trajectory: still shows the warm-start open-loop path.
     result.debug.was_rejected = true;
     RCLCPP_WARN(
       mppiLogger(),

@@ -161,6 +161,10 @@ void applyCostParam(
     params.steer_cmd_coeff = value;
   } else if (key == "steer_rate_coeff") {
     params.steer_rate_coeff = value;
+  } else if (key == "accel_cmd_std_dev") {
+    params.accel_cmd_std_dev = value;
+  } else if (key == "steer_cmd_std_dev") {
+    params.steer_cmd_std_dev = value;
   } else if (key == "nominal_curvature_min_chord_length_m") {
     params.nominal_curvature_min_chord_length_m = value;
   } else if (key == "lateral_acceleration_coeff") {

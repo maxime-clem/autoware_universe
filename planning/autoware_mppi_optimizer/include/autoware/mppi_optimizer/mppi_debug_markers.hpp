@@ -183,6 +183,17 @@ inline MarkerArray createMppiDebugMarkers(
       "mppi_reference", 0, makeColor(0.0F, 1.0F, 1.0F, 0.9F), 0.15, reference_points, z));
   }
 
+  if (!debug.nominal_trajectory.points.empty()) {
+    std::vector<std::pair<float, float>> nominal_points;
+    nominal_points.reserve(debug.nominal_trajectory.points.size());
+    for (const auto & point : debug.nominal_trajectory.points) {
+      nominal_points.emplace_back(
+        static_cast<float>(point.pose.position.x), static_cast<float>(point.pose.position.y));
+    }
+    marker_array.markers.push_back(makeLineStripMarker(
+      "mppi_nominal", 0, makeColor(1.0F, 0.55F, 0.0F, 0.95F), 0.12, nominal_points, z));
+  }
+
   if (!debug.optimal_horizon.empty()) {
     marker_array.markers.push_back(makeLineStripMarker(
       "mppi_optimal", 0, makeColor(1.0F, 0.0F, 0.0F, 1.0F), 0.2, debug.optimal_horizon, z));

@@ -49,6 +49,8 @@ void declare_first_order_dubins_mppi_cost_params(rclcpp::Node & node, const std:
   node.declare_parameter(param_name(prefix, "accel_cmd_coeff"), defaults.accel_cmd_coeff);
   node.declare_parameter(param_name(prefix, "steer_cmd_coeff"), defaults.steer_cmd_coeff);
   node.declare_parameter(param_name(prefix, "steer_rate_coeff"), defaults.steer_rate_coeff);
+  node.declare_parameter(param_name(prefix, "accel_cmd_std_dev"), defaults.accel_cmd_std_dev);
+  node.declare_parameter(param_name(prefix, "steer_cmd_std_dev"), defaults.steer_cmd_std_dev);
   node.declare_parameter(
     param_name(prefix, "nominal_curvature_min_chord_length_m"),
     defaults.nominal_curvature_min_chord_length_m);
@@ -104,6 +106,10 @@ FirstOrderDubinsMppiCostParams get_first_order_dubins_mppi_cost_params(
     static_cast<float>(node.get_parameter(param_name(prefix, "steer_cmd_coeff")).as_double());
   params.steer_rate_coeff =
     static_cast<float>(node.get_parameter(param_name(prefix, "steer_rate_coeff")).as_double());
+  params.accel_cmd_std_dev =
+    static_cast<float>(node.get_parameter(param_name(prefix, "accel_cmd_std_dev")).as_double());
+  params.steer_cmd_std_dev =
+    static_cast<float>(node.get_parameter(param_name(prefix, "steer_cmd_std_dev")).as_double());
   params.nominal_curvature_min_chord_length_m = static_cast<float>(
     node.get_parameter(param_name(prefix, "nominal_curvature_min_chord_length_m")).as_double());
   params.lateral_acceleration_coeff = static_cast<float>(

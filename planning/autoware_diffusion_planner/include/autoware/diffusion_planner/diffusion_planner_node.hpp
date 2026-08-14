@@ -240,6 +240,7 @@ private:
   rclcpp::Publisher<Trajectory>::SharedPtr pub_mppi_reference_trajectory_{nullptr};
   rclcpp::Publisher<Trajectory>::SharedPtr pub_mppi_nominal_control_trajectory_{nullptr};
   rclcpp::Publisher<Trajectory>::SharedPtr pub_mppi_optimized_trajectory_{nullptr};
+  rclcpp::Publisher<Trajectory>::SharedPtr pub_mppi_nominal_trajectory_{nullptr};
   rclcpp::Publisher<MarkerArray>::SharedPtr pub_mppi_markers_{nullptr};
   rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr pub_mppi_enabled_{nullptr};
   rclcpp::Publisher<CandidateTrajectories>::SharedPtr pub_trajectories_{nullptr};

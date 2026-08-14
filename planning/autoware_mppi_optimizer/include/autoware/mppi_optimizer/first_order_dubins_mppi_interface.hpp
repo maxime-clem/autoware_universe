@@ -168,6 +168,8 @@ struct FirstOrderDubinsMppiDebug
 {
   Trajectory reference_trajectory;
   Trajectory optimized_trajectory;
+  /** Open-loop rollout of the seeded u_nom warm-start (accel/steer cmds in a / front_wheel). */
+  Trajectory nominal_trajectory;
   std::vector<std::pair<float, float>> optimal_horizon;
   std::vector<FirstOrderDubinsMppiRollout> rollouts;
   FirstOrderDubinsMppiNominalControlProfile nominal_control_profile;
