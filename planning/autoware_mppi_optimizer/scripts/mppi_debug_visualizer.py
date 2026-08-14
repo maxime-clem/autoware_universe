@@ -1925,7 +1925,11 @@ def load_key_value_csv(path: Path) -> Dict[str, float]:
 
 
 def load_params_from_log(log_dir: Path, params_yaml: Optional[Path]) -> Dict[str, float]:
-    """Prefer logged cost_params.csv, then yaml, then defaults."""
+    """Load slider defaults: defaults ← logged cost_params.csv ← explicit --params-yaml.
+
+    When --params-yaml is passed, it wins over the online log so you can retune from a
+    local yaml without deleting cost_params.csv.
+    """
     params = dict(DEFAULT_PARAMS)
     logged = load_key_value_csv(log_dir / "cost_params.csv")
     for key, value in logged.items():
@@ -1933,14 +1937,9 @@ def load_params_from_log(log_dir: Path, params_yaml: Optional[Path]) -> Dict[str
             params[key] = value
     if params_yaml is not None:
         yaml_params = load_params_yaml(params_yaml)
-        # Yaml only fills keys still at default when log is missing; if log exists, keep log.
-        if not logged:
-            params.update({k: v for k, v in yaml_params.items() if k in params})
-        else:
-            # Still allow yaml to supply keys absent from the log file.
-            for key, value in yaml_params.items():
-                if key in params and key not in logged:
-                    params[key] = value
+        for key, value in yaml_params.items():
+            if key in params:
+                params[key] = value
     return params
 
 

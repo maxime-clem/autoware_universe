@@ -206,6 +206,8 @@ public:
       out << "skip_if_invalid," << (options.skip_if_invalid ? 1 : 0) << "\n";
       out << "use_last_control_as_nominal," << (options.use_last_control_as_nominal ? 1 : 0)
           << "\n";
+      out << "use_temporal_mpt_as_nominal," << (options.use_temporal_mpt_as_nominal ? 1 : 0)
+          << "\n";
     }
     runtime_written_ = true;
   }

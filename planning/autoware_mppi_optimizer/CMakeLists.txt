@@ -86,6 +86,18 @@ if(CUDA_AVAIL AND TRT_AVAIL)
   cuda_add_library(first_order_dubins_mppi SHARED
     src/first_order_dubins/first_order_dubins_mppi_interface.cu
   )
+  find_package(autoware_trajectory_optimizer REQUIRED)
+  ament_auto_add_library(mppi_temporal_mpt_nominal SHARED
+    src/first_order_dubins/temporal_mpt_nominal.cpp
+  )
+  target_link_libraries(mppi_temporal_mpt_nominal
+    mppi_trajectory_utils
+    autoware_trajectory_optimizer::acados_interface_temporal
+    rclcpp::rclcpp
+    tf2::tf2
+    tf2_geometry_msgs::tf2_geometry_msgs
+    autoware_planning_msgs::autoware_planning_msgs__rosidl_generator_cpp
+  )
   target_include_directories(first_order_dubins_mppi PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/include>
     $<INSTALL_INTERFACE:include>
@@ -93,6 +105,7 @@ if(CUDA_AVAIL AND TRT_AVAIL)
   )
   target_link_libraries(first_order_dubins_mppi
     mppi_trajectory_utils
+    mppi_temporal_mpt_nominal
     mppi_extensions
     rclcpp::rclcpp
     tf2_geometry_msgs::tf2_geometry_msgs

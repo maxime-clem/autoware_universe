@@ -51,6 +51,7 @@ add_custom_target(generate_acados_code_temporal DEPENDS ${GENERATED_TEMPORAL_MPC
 # 4. acados_interface_temporal library
 add_library(acados_interface_temporal SHARED
   ${CMAKE_CURRENT_SOURCE_DIR}/src/acados_interface.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/path_tracking_solver.cpp
   ${GENERATED_TEMPORAL_MPC_FILES}
 )
 
@@ -69,6 +70,9 @@ target_include_directories(acados_interface_temporal PUBLIC
   ${ACADOS_SOURCE_DIR}/include/blasfeo/include
   ${ACADOS_SOURCE_DIR}/include/hpipm/include
 )
+
+# Public consumer API (no generated acados headers).
+target_compile_features(acados_interface_temporal PUBLIC cxx_std_17)
 
 target_link_libraries(acados_interface_temporal PUBLIC acados)
 

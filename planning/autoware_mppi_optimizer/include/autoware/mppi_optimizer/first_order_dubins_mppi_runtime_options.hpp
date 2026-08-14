@@ -32,6 +32,11 @@ struct FirstOrderDubinsMppiRuntimeOptions
   bool skip_if_invalid{false};
   /** Warm-start u_nom from shifted previous optimized controls (else reseed from DP each cycle). */
   bool use_last_control_as_nominal{false};
+  /**
+   * When true (and not using last-u_opt / forced nominal), seed u_nom from acados temporal MPT
+   * instead of the geometric diffusion seed. Falls back to diffusion seed on solve failure.
+   */
+  bool use_temporal_mpt_as_nominal{false};
 };
 
 }  // namespace autoware::mppi_optimizer

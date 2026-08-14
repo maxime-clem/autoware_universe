@@ -43,6 +43,8 @@ void declare_first_order_dubins_mppi_runtime_options(
   node.declare_parameter(param_name(prefix, "skip_if_invalid"), defaults.skip_if_invalid);
   node.declare_parameter(
     param_name(prefix, "use_last_control_as_nominal"), defaults.use_last_control_as_nominal);
+  node.declare_parameter(
+    param_name(prefix, "use_temporal_mpt_as_nominal"), defaults.use_temporal_mpt_as_nominal);
 }
 
 FirstOrderDubinsMppiRuntimeOptions get_first_order_dubins_mppi_runtime_options(
@@ -61,6 +63,8 @@ FirstOrderDubinsMppiRuntimeOptions get_first_order_dubins_mppi_runtime_options(
   options.skip_if_invalid = node.get_parameter(param_name(prefix, "skip_if_invalid")).as_bool();
   options.use_last_control_as_nominal =
     node.get_parameter(param_name(prefix, "use_last_control_as_nominal")).as_bool();
+  options.use_temporal_mpt_as_nominal =
+    node.get_parameter(param_name(prefix, "use_temporal_mpt_as_nominal")).as_bool();
   return options;
 }
 

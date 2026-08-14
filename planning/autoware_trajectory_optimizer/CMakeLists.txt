@@ -123,9 +123,16 @@ if(BUILD_TESTING)
   )
 endif()
 
-install(TARGETS acados_interface_temporal LIBRARY DESTINATION lib)
+install(TARGETS acados_interface_temporal
+  EXPORT export_acados_interface_temporal
+  ARCHIVE DESTINATION lib
+  LIBRARY DESTINATION lib
+  RUNTIME DESTINATION bin
+)
 install(FILES src/acados_mpt/include/acados_interface.hpp
   DESTINATION include/autoware/trajectory_optimizer)
+install(FILES src/acados_mpt/include/temporal_mpt/path_tracking_solver.hpp
+  DESTINATION include/temporal_mpt)
 
 set(TEMPORAL_MODEL "kinematic_bicycle_temporal")
 set(TEMPORAL_GEN_DIR "${CMAKE_CURRENT_BINARY_DIR}/src/acados_mpt/c_generated_code")
@@ -141,6 +148,8 @@ install(PROGRAMS
   scripts/temporal_mpt_python_reference.py
   DESTINATION lib/${PROJECT_NAME}
 )
+
+ament_export_targets(export_acados_interface_temporal HAS_LIBRARY_TARGET)
 
 ament_auto_package(
   USE_SCOPED_HEADER_INSTALL_DIR

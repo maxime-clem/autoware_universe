@@ -12,6 +12,7 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+#include "autoware/mppi_optimizer/detail/temporal_mpt_nominal.hpp"
 #include "autoware/mppi_optimizer/detail/trajectory_utils.hpp"
 #include "autoware/mppi_optimizer/detail/trajectory_validator.hpp"
 #include "autoware/mppi_optimizer/first_order_dubins_mppi_cost_params.hpp"
@@ -577,6 +578,9 @@ struct FirstOrderDubinsMppiInterface::Impl
   bool skip_if_invalid{false};
   /** Warm-start u_nom from shifted previous u_opt when available. */
   bool use_last_control_as_nominal{false};
+  /** Cold-seed u_nom from acados temporal MPT instead of geometric diffusion seed. */
+  bool use_temporal_mpt_as_nominal{false};
+  detail::TemporalMptNominalSeeder temporal_mpt_nominal_seeder;
   /** Fill debug.rollouts with top-K weighted samples (CPU replay). Offline retune only by default.
    */
   bool enable_rollout_visualization{false};
@@ -630,6 +634,7 @@ struct FirstOrderDubinsMppiInterface::Impl
     dyn.min_accel = vehicle_params.min_accel();
     dyn.max_accel = vehicle_params.max_accel();
     model.setParams(dyn);
+    temporal_mpt_nominal_seeder.setWheelBase(vehicle_params.wheel_base);
 
     const int acc_delay_steps = quantizeDelaySteps(vehicle_params.acc_time_delay, kDt);
     const int steer_delay_steps = quantizeDelaySteps(vehicle_params.steer_time_delay, kDt);
@@ -864,6 +869,24 @@ struct FirstOrderDubinsMppiInterface::Impl
     }
   }
 
+  void seedNominalControlFromTemporalMpt(
+    const Trajectory & reference, const detail::InitialState & ego)
+  {
+    const auto nominal =
+      temporal_mpt_nominal_seeder.solve(reference, ego, vehicle_params, kMppiHorizon);
+    if (!nominal) {
+      seedNominalControlFromDiffusionReference(reference, tracking_start_idx);
+      return;
+    }
+    const int accel_idx =
+      static_cast<int>(FirstOrderDubinsBicycleParams::ControlIndex::ACCELERATION_CMD);
+    const int steer_idx = static_cast<int>(FirstOrderDubinsBicycleParams::ControlIndex::STEER_CMD);
+    for (int t = 0; t < kMppiHorizon; ++t) {
+      u_nom(accel_idx, t) = (*nominal)[static_cast<size_t>(t)].accel_cmd;
+      u_nom(steer_idx, t) = (*nominal)[static_cast<size_t>(t)].steer_cmd;
+    }
+  }
+
   void seedNominalControlFromForced()
   {
     const int accel_idx =
@@ -891,7 +914,7 @@ struct FirstOrderDubinsMppiInterface::Impl
   }
 
   void seedNominalControl(
-    const Trajectory & reference, const size_t start_idx, const float ego_velocity)
+    const Trajectory & reference, const size_t start_idx, const detail::InitialState & ego)
   {
     if (forced_nominal_pending) {
       seedNominalControlFromForced();
@@ -899,13 +922,17 @@ struct FirstOrderDubinsMppiInterface::Impl
       snapshotNominalForLog();
       return;
     }
-    // After a tracking reset, step_count is 0 and u_opt was cleared — fall back to DP seed.
-    // Also reseed from the diffusion reference when departing from a stop: shifted last u_opt
-    // is usually near-zero / braking and is a poor engage warm-start.
+    // After a tracking reset, step_count is 0 and u_opt was cleared — fall back to DP / MPT seed.
+    // Also reseed when departing from a stop: shifted last u_opt is usually near-zero / braking.
     constexpr float kStoppedVelocityMps = 0.05F;
-    const bool started_from_stop = std::abs(ego_velocity) < kStoppedVelocityMps;
+    const bool started_from_stop = std::abs(ego.velocity) < kStoppedVelocityMps;
     if (use_last_control_as_nominal && step_count > 0 && !started_from_stop) {
       seedNominalControlFromLastOptimized();
+      snapshotNominalForLog();
+      return;
+    }
+    if (use_temporal_mpt_as_nominal) {
+      seedNominalControlFromTemporalMpt(reference, ego);
       snapshotNominalForLog();
       return;
     }
@@ -958,7 +985,7 @@ struct FirstOrderDubinsMppiInterface::Impl
 
     const auto initial_state =
       detail::makeInitialState(odometry, acceleration, steering_status, vehicle_params);
-    seedNominalControl(reference, tracking_start_idx, initial_state.velocity);
+    seedNominalControl(reference, tracking_start_idx, initial_state);
 
     x = model.getZeroState();
     x(static_cast<int>(FirstOrderDubinsBicycleParams::StateIndex::POS_X)) = initial_state.x;
@@ -1173,6 +1200,13 @@ void FirstOrderDubinsMppiInterface::setRuntimeOptions(
   setAblationOptions(
     options.ignore_obstacles, options.ignore_drivable_area, options.force_cold_start_each_step,
     options.skip_if_invalid, options.use_last_control_as_nominal);
+  if (!impl_) {
+    throw std::runtime_error("FirstOrderDubinsMppiInterface implementation is missing");
+  }
+  impl_->use_temporal_mpt_as_nominal = options.use_temporal_mpt_as_nominal;
+  RCLCPP_INFO(
+    mppiLogger(), "MPPI nominal seed: use_temporal_mpt_as_nominal=%s",
+    options.use_temporal_mpt_as_nominal ? "true" : "false");
 }
 void FirstOrderDubinsMppiInterface::setDebugTrajectoryLogging(
   const bool enable, const std::string & directory)
@@ -1210,6 +1244,7 @@ void FirstOrderDubinsMppiInterface::setAblationOptions(
   runtime.force_cold_start_each_step = force_cold_start_each_step;
   runtime.skip_if_invalid = skip_if_invalid;
   runtime.use_last_control_as_nominal = use_last_control_as_nominal;
+  runtime.use_temporal_mpt_as_nominal = impl_->use_temporal_mpt_as_nominal;
   impl_->debug_trajectory_logger.writeRuntimeOptionsOnce(runtime);
 }
 
@@ -1500,6 +1535,7 @@ FirstOrderDubinsMppiOptimizationResult FirstOrderDubinsMppiInterface::optimizeTr
     runtime.force_cold_start_each_step = impl_->force_cold_start_each_step;
     runtime.skip_if_invalid = impl_->skip_if_invalid;
     runtime.use_last_control_as_nominal = impl_->use_last_control_as_nominal;
+    runtime.use_temporal_mpt_as_nominal = impl_->use_temporal_mpt_as_nominal;
     impl_->debug_trajectory_logger.writeRuntimeOptionsOnce(runtime);
   }
   impl_->debug_trajectory_logger.logFrame(
