@@ -91,6 +91,8 @@ DiffusionPlanner::DiffusionPlanner(const rclcpp::NodeOptions & options)
   pub_trajectory_ = this->create_publisher<Trajectory>("~/output/trajectory", 1);
   pub_mppi_reference_trajectory_ =
     this->create_publisher<Trajectory>("~/debug/mppi/reference_trajectory", 1);
+  pub_mppi_nominal_control_trajectory_ =
+    this->create_publisher<Trajectory>("~/debug/mppi/nominal_control_trajectory", 1);
   pub_mppi_optimized_trajectory_ =
     this->create_publisher<Trajectory>("~/debug/mppi/optimized_trajectory", 1);
   pub_mppi_markers_ = this->create_publisher<MarkerArray>("~/debug/mppi/markers", 1);
@@ -800,12 +802,25 @@ void DiffusionPlanner::publish_mppi_debug(
   const rclcpp::Time & stamp)
 {
   auto reference = debug.reference_trajectory;
+  auto nominal_control = debug.reference_trajectory;
   auto optimized = debug.optimized_trajectory;
   reference.header.stamp = stamp;
   reference.header.frame_id = frame_id;
+  nominal_control.header = reference.header;
   optimized.header = reference.header;
 
+  const auto & profile = debug.nominal_control_profile;
+  const std::size_t nominal_control_size = std::min(
+    {nominal_control.points.size(), profile.acceleration_commands_mps2.size(),
+     profile.steering_commands_rad.size()});
+  nominal_control.points.resize(nominal_control_size);
+  for (std::size_t i = 0; i < nominal_control_size; ++i) {
+    nominal_control.points[i].acceleration_mps2 = profile.acceleration_commands_mps2[i];
+    nominal_control.points[i].front_wheel_angle_rad = profile.steering_commands_rad[i];
+  }
+
   pub_mppi_reference_trajectory_->publish(reference);
+  pub_mppi_nominal_control_trajectory_->publish(nominal_control);
   pub_mppi_optimized_trajectory_->publish(optimized);
 }
 
