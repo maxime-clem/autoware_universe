@@ -20,6 +20,7 @@
 #include "autoware/diffusion_planner/preprocessing/preprocessing_utils.hpp"
 #include "autoware/diffusion_planner/utils/marker_utils.hpp"
 #include "autoware/diffusion_planner/utils/utils.hpp"
+#include "autoware/mppi_optimizer/detail/trajectory_utils.hpp"
 #include "autoware/mppi_optimizer/first_order_dubins_mppi_cost_params_ros.hpp"
 #include "autoware/mppi_optimizer/first_order_dubins_mppi_runtime_options_ros.hpp"
 #include "autoware/mppi_optimizer/first_order_dubins_mppi_vehicle_params_ros.hpp"
@@ -641,8 +642,9 @@ void DiffusionPlanner::on_timer()
       const auto cost_params =
         autoware::mppi_optimizer::get_first_order_dubins_mppi_cost_params(*this);
       mppi_optimizer_->setCostParams(cost_params);
-      mppi_optimizer_->setVehicleParams(
-        autoware::mppi_optimizer::get_first_order_dubins_mppi_vehicle_params(*this));
+      const auto vehicle_params =
+        autoware::mppi_optimizer::get_first_order_dubins_mppi_vehicle_params(*this);
+      mppi_optimizer_->setVehicleParams(vehicle_params);
       mppi_optimizer_->setRuntimeOptions(
         autoware::mppi_optimizer::get_first_order_dubins_mppi_runtime_options(*this));
       prev_route_ = *core_->get_route();
@@ -655,8 +657,18 @@ void DiffusionPlanner::on_timer()
         std::abs(vehicle_info_.max_longitudinal_offset_m));
       const double max_lateral_offset = std::max(
         std::abs(vehicle_info_.min_lateral_offset_m), std::abs(vehicle_info_.max_lateral_offset_m));
-      mppi_object_filter_margin_m_ =
-        std::hypot(max_longitudinal_offset, max_lateral_offset) + cost_params.boundary_threshold;
+      // MPPI expands both ego OBB half-axes by obstacle_collision_margin. Use the radius of that
+      // expanded box so this circular prefilter cannot discard an object that the OBB test could
+      // collide with, including near an expanded corner.
+      mppi_object_filter_margin_m_ = std::hypot(
+        max_longitudinal_offset + cost_params.obstacle_collision_margin,
+        max_lateral_offset + cost_params.obstacle_collision_margin);
+      const double max_vehicle_delay_s =
+        std::max(vehicle_params.acc_time_delay, vehicle_params.steer_time_delay);
+      const double delay_steps =
+        std::max(0.0, std::round(max_vehicle_delay_s / autoware::mppi_optimizer::detail::kMppiDt));
+      mppi_object_filter_additional_prediction_horizon_s_ =
+        delay_steps * autoware::mppi_optimizer::detail::kMppiDt;
     }
 
     try {
@@ -670,7 +682,8 @@ void DiffusionPlanner::on_timer()
         steering_status ? std::make_optional(*steering_status) : std::nullopt;
 
       const auto objects_in_range = autoware::avoidance_target_detector::filter_objects_in_range(
-        *objects, planner_output.trajectory, mppi_object_filter_margin_m_);
+        *objects, planner_output.trajectory, mppi_object_filter_margin_m_,
+        mppi_object_filter_additional_prediction_horizon_s_);
       object_selector_.update_objects(
         now(), objects_in_range, planner_output.trajectory, *extended_route_handler_);
       auto avoidance_targets = object_selector_.get_avoidance_targets(
