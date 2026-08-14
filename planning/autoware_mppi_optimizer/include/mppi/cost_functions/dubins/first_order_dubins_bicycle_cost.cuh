@@ -11,6 +11,16 @@
 #include <mppi/cost_functions/cost.cuh>
 #include <mppi/dynamics/dubins/first_order_dubins_bicycle.cuh>
 
+__host__ __device__ inline float computeSmoothBarrierCost(
+  const float distance, const float safe_margin, const float weight, const float max_penalty)
+{
+  if (distance >= safe_margin) {
+    return 0.0F;
+  }
+  const float violation = safe_margin - distance;
+  return fminf(weight * violation * violation, max_penalty);
+}
+
 template <int NUM_TIMESTEPS>
 struct FirstOrderDubinsBicycleCostParams : public CostParams<2>
 {
@@ -35,8 +45,6 @@ struct FirstOrderDubinsBicycleCostParams : public CostParams<2>
   float corner_buffer_coeff = 0.0F;
   /** Desired minimum distance [m] from each ego corner to drivable-area boundary segments. */
   float corner_safe_margin = 0.3F;
-  /** Crash penalty scale; latched crash_status is 1=lateral, 2=obstacle, 3=road border. */
-  float crash_coeff = 100000.0F;
   float boundary_threshold = 0.8F;
   /** Beyond bound if signed lateral offset exceeds these (path-left = +); <0 falls back to
    * boundary_threshold. */
@@ -60,8 +68,13 @@ struct FirstOrderDubinsBicycleCostParams : public CostParams<2>
   float obstacle_collision_margin = 0.2F;
   /** Added to the ego footprint when testing collision with road-border segments. */
   float road_border_collision_margin = 0.2F;
-  /** Per-timestep soft cost when the ego footprint crosses a drivable-area boundary. */
-  float drivable_area_crossing_coeff = 10000.0F;
+  float obstacle_safe_margin = 0.5F;
+  float obstacle_barrier_weight = 2000.0F;
+  float road_border_safe_margin = 0.3F;
+  float road_border_barrier_weight = 2000.0F;
+  float drivable_area_safe_margin = 0.0F;
+  float drivable_area_barrier_weight = 2000.0F;
+  float max_crash_penalty = 100000.0F;
 };
 
 template <
@@ -103,6 +116,10 @@ public:
     const float * x, const float * y, const float * yaw, const float * half_length,
     const float * half_width, int count);
 
+  /**
+   * Time-varying obstacle poses. All trajectories participate in hard output validation; only
+   * pose-invariant trajectories participate in the gradual static-obstacle barrier.
+   */
   void setOrientedBoxObstacleTrajectories(
     const float * x, const float * y, const float * yaw, const float * half_length,
     const float * half_width, int obstacle_count, int num_timesteps);
@@ -156,20 +173,27 @@ public:
   __host__ __device__ bool egoIntersectsObstacleAtStep(
     const float x, const float y, const float yaw, int timestep) const;
 
+  /** Signed distance between the physical ego OBB and the closest static obstacle OBB. */
+  __host__ __device__ float distanceToClosestObstacle(
+    float x, float y, float yaw, int timestep) const;
+
   /** Placeholder for ego-footprint collision against static road-border segments. */
   __host__ __device__ bool egoIntersectsRoadBorder(
     const float x, const float y, const float yaw) const;
+
+  /** Euclidean ego-contour clearance to the closest road-border segment. */
+  __host__ __device__ float distanceToRoadBorder(float x, float y, float yaw) const;
 
   /** Placeholder for ego-footprint crossing of drivable-area boundary segments. */
   __host__ __device__ bool egoCrossesDrivableAreaBoundary(
     const float x, const float y, const float yaw) const;
 
-  __host__ __device__ bool isCrashLatched(const int * crash_status) const;
+  /** Signed clearance to drivable-area segments; negative while a boundary penetrates the OBB. */
+  __host__ __device__ float distanceToDrivableArea(float x, float y, float yaw) const;
 
-  __host__ __device__ bool detectAndLatchCrash(
-    const float x, const float y, const float yaw, int timestep, int * crash_status) const;
-
-  __host__ __device__ float latchedCrashCost(const int * crash_status) const;
+  __host__ __device__ void computeGradualCrashCosts(
+    float x, float y, float yaw, int timestep, float & drivable_area_cost, float & obstacle_cost,
+    float & road_border_cost) const;
 
   float computeStateCost(
     const Eigen::Ref<const output_array> & y, int timestep, int * crash_status);
@@ -184,7 +208,7 @@ public:
     const Eigen::Ref<const control_array> & u, const Eigen::Ref<const output_array> & y,
     int timestep);
 
-  /** Cost components for one host-replayed running step, with GPU-equivalent crash latching. */
+  /** Cost components for one host-replayed running step, including gradual static constraints. */
   autoware::mppi_optimizer::FirstOrderDubinsMppiCostBreakdown computeRunningCostBreakdown(
     const Eigen::Ref<const output_array> & y, const Eigen::Ref<const control_array> & u,
     int timestep, int * crash_status) const;
@@ -217,6 +241,8 @@ public:
   float obs_yaw_[kMaxObstacles][NUM_TIMESTEPS] = {};
   float obs_half_length_[kMaxObstacles] = {};
   float obs_half_width_[kMaxObstacles] = {};
+  /** True when the obstacle pose is invariant across the supplied horizon. */
+  bool obs_is_static_[kMaxObstacles] = {};
   int num_road_border_segments_ = 0;
   float road_border_x0_[kMaxRoadBorderSegments] = {};
   float road_border_y0_[kMaxRoadBorderSegments] = {};

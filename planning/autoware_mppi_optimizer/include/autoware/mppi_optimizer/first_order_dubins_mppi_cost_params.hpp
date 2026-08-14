@@ -36,7 +36,6 @@ struct FirstOrderDubinsMppiCostParams
   float track_center_coeff{0.0F};
   float corner_buffer_coeff{0.0F};
   float corner_safe_margin{0.3F};
-  float crash_coeff{100000.0F};
   float boundary_threshold{1.5F};
   float accel_cmd_coeff{0.0F};
   float steer_cmd_coeff{0.0F};
@@ -48,7 +47,13 @@ struct FirstOrderDubinsMppiCostParams
   float longitudinal_jerk_coeff{10.0F};
   float obstacle_collision_margin{0.5F};
   float road_border_collision_margin{0.3F};
-  float drivable_area_crossing_coeff{100.0F};
+  float obstacle_safe_margin{0.5F};
+  float obstacle_barrier_weight{2000.0F};
+  float road_border_safe_margin{0.3F};
+  float road_border_barrier_weight{2000.0F};
+  float drivable_area_safe_margin{0.0F};
+  float drivable_area_barrier_weight{2000.0F};
+  float max_crash_penalty{100000.0F};
   float goal_pos_coeff{1000.0F};
   float goal_speed_coeff{0.0F};
   float goal_yaw_coeff{500.0F};
