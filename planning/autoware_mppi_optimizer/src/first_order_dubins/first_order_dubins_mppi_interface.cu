@@ -1430,6 +1430,9 @@ FirstOrderDubinsMppiOptimizationResult FirstOrderDubinsMppiInterface::optimizeTr
   result.trajectory = output;
   result.debug.reference_trajectory = input;
   result.debug.optimized_trajectory = output;
+  result.debug.nominal_control_profile.time_step_s = kDt;
+  result.debug.nominal_control_profile.acceleration_commands_mps2 = impl_->logged_nominal_accel;
+  result.debug.nominal_control_profile.steering_commands_rad = impl_->logged_nominal_steer;
   result.debug.validation = validation;
   if (impl_->enable_rollout_visualization) {
     buildRolloutVisualization(

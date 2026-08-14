@@ -155,6 +155,13 @@ TEST_F(FirstOrderDubinsMppiInterfaceGpuTest, ProducesFinitePostStepTrajectoryAnd
   EXPECT_TRUE(result.debug.validation.isValid());
   EXPECT_FALSE(result.debug.was_rejected);
   EXPECT_EQ(result.debug.optimal_horizon.size(), static_cast<std::size_t>(detail::kMppiHorizon));
+  EXPECT_FLOAT_EQ(result.debug.nominal_control_profile.time_step_s, detail::kMppiDt);
+  EXPECT_EQ(
+    result.debug.nominal_control_profile.acceleration_commands_mps2.size(),
+    static_cast<std::size_t>(detail::kMppiHorizon));
+  EXPECT_EQ(
+    result.debug.nominal_control_profile.steering_commands_rad.size(),
+    static_cast<std::size_t>(detail::kMppiHorizon));
 
   const auto & first = result.trajectory.points.front();
   EXPECT_NEAR(first.pose.position.x, 0.2, 1.0E-5);
