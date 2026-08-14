@@ -85,7 +85,7 @@ using SAMPLER = mppi::sampling_distributions::GaussianDistribution<DYN::DYN_PARA
 using Mppi = VanillaMPPIController<DYN, COST, FB, kMppiHorizon, kNumRollouts, SAMPLER>;
 using CostBreakdown = FirstOrderDubinsMppiCostBreakdown;
 
-constexpr std::array<float CostBreakdown::*, 20> kCostBreakdownFields = {
+constexpr std::array<float CostBreakdown::*, 21> kCostBreakdownFields = {
   &CostBreakdown::speed,
   &CostBreakdown::track,
   &CostBreakdown::heading,
@@ -96,13 +96,14 @@ constexpr std::array<float CostBreakdown::*, 20> kCostBreakdownFields = {
   &CostBreakdown::track_center,
   &CostBreakdown::corner_buffer,
   &CostBreakdown::drivable_area,
+  &CostBreakdown::obstacle,
+  &CostBreakdown::road_border,
   &CostBreakdown::acceleration_command,
   &CostBreakdown::steering_command,
   &CostBreakdown::lateral_acceleration,
   &CostBreakdown::lateral_jerk,
   &CostBreakdown::longitudinal_jerk,
   &CostBreakdown::steering_rate,
-  &CostBreakdown::crash,
   &CostBreakdown::running_total,
   &CostBreakdown::terminal_total,
   &CostBreakdown::total,
@@ -201,7 +202,6 @@ void applyUserCostParams(
   cost_params.track_center_coeff = user.track_center_coeff;
   cost_params.corner_buffer_coeff = user.corner_buffer_coeff;
   cost_params.corner_safe_margin = user.corner_safe_margin;
-  cost_params.crash_coeff = user.crash_coeff;
   cost_params.boundary_threshold = user.boundary_threshold;
   cost_params.accel_cmd_coeff = user.accel_cmd_coeff;
   cost_params.steer_cmd_coeff = user.steer_cmd_coeff;
@@ -211,7 +211,13 @@ void applyUserCostParams(
   cost_params.longitudinal_jerk_coeff = user.longitudinal_jerk_coeff;
   cost_params.obstacle_collision_margin = user.obstacle_collision_margin;
   cost_params.road_border_collision_margin = user.road_border_collision_margin;
-  cost_params.drivable_area_crossing_coeff = user.drivable_area_crossing_coeff;
+  cost_params.obstacle_safe_margin = user.obstacle_safe_margin;
+  cost_params.obstacle_barrier_weight = user.obstacle_barrier_weight;
+  cost_params.road_border_safe_margin = user.road_border_safe_margin;
+  cost_params.road_border_barrier_weight = user.road_border_barrier_weight;
+  cost_params.drivable_area_safe_margin = user.drivable_area_safe_margin;
+  cost_params.drivable_area_barrier_weight = user.drivable_area_barrier_weight;
+  cost_params.max_crash_penalty = user.max_crash_penalty;
 }
 
 FirstOrderDubinsMppiState toHostState(const DYN::state_array & x)
@@ -733,7 +739,8 @@ struct FirstOrderDubinsMppiInterface::Impl
       "acc_delay=%.3f (%d steps), steer_delay=%.3f (%d steps), "
       "steer_rate_lim=%.2f, vel_rate_lim=%.2f, ego=%.2fx%.2f, axle_to_center=%.2f, "
       "boundary_threshold=%.2f, obs_margin=%.2f, road_border_margin=%.2f, "
-      "drivable_area_coeff=%.2f)",
+      "obs_barrier=%.2f@%.2f, road_barrier=%.2f@%.2f, drive_barrier=%.2f@%.2f, "
+      "max_crash_penalty=%.2f)",
       kMppiHorizon, kNumRollouts, kDt, user_cost_params_.lambda, vehicle_params.wheel_base,
       vehicle_params.max_steer_angle, user_cost_params_.accel_cmd_std_dev,
       user_cost_params_.steer_cmd_std_dev, vehicle_params.acc_time_constant,
@@ -742,7 +749,10 @@ struct FirstOrderDubinsMppiInterface::Impl
       vehicle_params.vel_rate_lim, vehicle_params.ego_length, vehicle_params.ego_width,
       vehicle_params.ego_axle_to_box_center, cost_params.boundary_threshold,
       cost_params.obstacle_collision_margin, cost_params.road_border_collision_margin,
-      cost_params.drivable_area_crossing_coeff);
+      cost_params.obstacle_barrier_weight, cost_params.obstacle_safe_margin,
+      cost_params.road_border_barrier_weight, cost_params.road_border_safe_margin,
+      cost_params.drivable_area_barrier_weight, cost_params.drivable_area_safe_margin,
+      cost_params.max_crash_penalty);
   }
 
   void resetTrackingState()

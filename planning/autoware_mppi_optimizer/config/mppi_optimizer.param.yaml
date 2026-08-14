@@ -20,7 +20,6 @@
     # Soft clearance cost for ego corners near drivable-area boundaries; 0 = off.
     corner_buffer_coeff: 0.0
     corner_safe_margin: 0.3
-    crash_coeff: 100000.0
     boundary_threshold: 0.8
     lateral_acceleration_coeff: 100.0
     lateral_jerk_coeff: 10.0
@@ -34,13 +33,20 @@
 
     obstacle_collision_margin: 0.2
     road_border_collision_margin: 0.3
-    # Spatial window for Menger curvature when cold-starting nominal steering.
+    obstacle_safe_margin: 0.5
+    obstacle_barrier_weight: 2000.0
+    road_border_safe_margin: 0.3
+    road_border_barrier_weight: 2000.0
+    drivable_area_safe_margin: 0.0
+    drivable_area_barrier_weight: 10.0
+    max_crash_penalty: 100000.0
+
     nominal_curvature_min_chord_length_m: 1.5
-    drivable_area_crossing_coeff: 10.0
 
     # When false, MPPI plant ignores acc/steer input delays (N=0). First-order lag τ still applies.
     # Delays still come from simulator_model when this is true.
     enable_input_delay_compensation: true
+
 
     # Optional offline debug logging for mppi_debug_visualizer.py --log-dir
     # Empty directory resolves to $XDG_CACHE_HOME/autoware/mppi_debug_log

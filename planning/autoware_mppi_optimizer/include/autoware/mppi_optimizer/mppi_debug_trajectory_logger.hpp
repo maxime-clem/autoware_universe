@@ -155,7 +155,6 @@ public:
         out << "track_center_coeff," << cost.track_center_coeff << "\n";
         out << "corner_buffer_coeff," << cost.corner_buffer_coeff << "\n";
         out << "corner_safe_margin," << cost.corner_safe_margin << "\n";
-        out << "crash_coeff," << cost.crash_coeff << "\n";
         out << "boundary_threshold," << cost.boundary_threshold << "\n";
         out << "accel_cmd_coeff," << cost.accel_cmd_coeff << "\n";
         out << "steer_cmd_coeff," << cost.steer_cmd_coeff << "\n";
@@ -169,7 +168,13 @@ public:
         out << "longitudinal_jerk_coeff," << cost.longitudinal_jerk_coeff << "\n";
         out << "obstacle_collision_margin," << cost.obstacle_collision_margin << "\n";
         out << "road_border_collision_margin," << cost.road_border_collision_margin << "\n";
-        out << "drivable_area_crossing_coeff," << cost.drivable_area_crossing_coeff << "\n";
+        out << "obstacle_safe_margin," << cost.obstacle_safe_margin << "\n";
+        out << "obstacle_barrier_weight," << cost.obstacle_barrier_weight << "\n";
+        out << "road_border_safe_margin," << cost.road_border_safe_margin << "\n";
+        out << "road_border_barrier_weight," << cost.road_border_barrier_weight << "\n";
+        out << "drivable_area_safe_margin," << cost.drivable_area_safe_margin << "\n";
+        out << "drivable_area_barrier_weight," << cost.drivable_area_barrier_weight << "\n";
+        out << "max_crash_penalty," << cost.max_crash_penalty << "\n";
       }
     }
     {

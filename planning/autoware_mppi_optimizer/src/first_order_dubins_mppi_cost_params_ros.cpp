@@ -46,7 +46,6 @@ void declare_first_order_dubins_mppi_cost_params(rclcpp::Node & node, const std:
   node.declare_parameter(param_name(prefix, "track_center_coeff"), defaults.track_center_coeff);
   node.declare_parameter(param_name(prefix, "corner_buffer_coeff"), defaults.corner_buffer_coeff);
   node.declare_parameter(param_name(prefix, "corner_safe_margin"), defaults.corner_safe_margin);
-  node.declare_parameter(param_name(prefix, "crash_coeff"), defaults.crash_coeff);
   node.declare_parameter(param_name(prefix, "boundary_threshold"), defaults.boundary_threshold);
   node.declare_parameter(param_name(prefix, "accel_cmd_coeff"), defaults.accel_cmd_coeff);
   node.declare_parameter(param_name(prefix, "steer_cmd_coeff"), defaults.steer_cmd_coeff);
@@ -65,8 +64,18 @@ void declare_first_order_dubins_mppi_cost_params(rclcpp::Node & node, const std:
     param_name(prefix, "obstacle_collision_margin"), defaults.obstacle_collision_margin);
   node.declare_parameter(
     param_name(prefix, "road_border_collision_margin"), defaults.road_border_collision_margin);
+  node.declare_parameter(param_name(prefix, "obstacle_safe_margin"), defaults.obstacle_safe_margin);
   node.declare_parameter(
-    param_name(prefix, "drivable_area_crossing_coeff"), defaults.drivable_area_crossing_coeff);
+    param_name(prefix, "obstacle_barrier_weight"), defaults.obstacle_barrier_weight);
+  node.declare_parameter(
+    param_name(prefix, "road_border_safe_margin"), defaults.road_border_safe_margin);
+  node.declare_parameter(
+    param_name(prefix, "road_border_barrier_weight"), defaults.road_border_barrier_weight);
+  node.declare_parameter(
+    param_name(prefix, "drivable_area_safe_margin"), defaults.drivable_area_safe_margin);
+  node.declare_parameter(
+    param_name(prefix, "drivable_area_barrier_weight"), defaults.drivable_area_barrier_weight);
+  node.declare_parameter(param_name(prefix, "max_crash_penalty"), defaults.max_crash_penalty);
   node.declare_parameter(param_name(prefix, "goal_pos_coeff"), defaults.goal_pos_coeff);
   node.declare_parameter(param_name(prefix, "goal_speed_coeff"), defaults.goal_speed_coeff);
   node.declare_parameter(param_name(prefix, "goal_yaw_coeff"), defaults.goal_yaw_coeff);
@@ -100,8 +109,6 @@ FirstOrderDubinsMppiCostParams get_first_order_dubins_mppi_cost_params(
     static_cast<float>(node.get_parameter(param_name(prefix, "corner_buffer_coeff")).as_double());
   params.corner_safe_margin =
     static_cast<float>(node.get_parameter(param_name(prefix, "corner_safe_margin")).as_double());
-  params.crash_coeff =
-    static_cast<float>(node.get_parameter(param_name(prefix, "crash_coeff")).as_double());
   params.boundary_threshold =
     static_cast<float>(node.get_parameter(param_name(prefix, "boundary_threshold")).as_double());
   params.accel_cmd_coeff =
@@ -126,8 +133,20 @@ FirstOrderDubinsMppiCostParams get_first_order_dubins_mppi_cost_params(
     node.get_parameter(param_name(prefix, "obstacle_collision_margin")).as_double());
   params.road_border_collision_margin = static_cast<float>(
     node.get_parameter(param_name(prefix, "road_border_collision_margin")).as_double());
-  params.drivable_area_crossing_coeff = static_cast<float>(
-    node.get_parameter(param_name(prefix, "drivable_area_crossing_coeff")).as_double());
+  params.obstacle_safe_margin =
+    static_cast<float>(node.get_parameter(param_name(prefix, "obstacle_safe_margin")).as_double());
+  params.obstacle_barrier_weight = static_cast<float>(
+    node.get_parameter(param_name(prefix, "obstacle_barrier_weight")).as_double());
+  params.road_border_safe_margin = static_cast<float>(
+    node.get_parameter(param_name(prefix, "road_border_safe_margin")).as_double());
+  params.road_border_barrier_weight = static_cast<float>(
+    node.get_parameter(param_name(prefix, "road_border_barrier_weight")).as_double());
+  params.drivable_area_safe_margin = static_cast<float>(
+    node.get_parameter(param_name(prefix, "drivable_area_safe_margin")).as_double());
+  params.drivable_area_barrier_weight = static_cast<float>(
+    node.get_parameter(param_name(prefix, "drivable_area_barrier_weight")).as_double());
+  params.max_crash_penalty =
+    static_cast<float>(node.get_parameter(param_name(prefix, "max_crash_penalty")).as_double());
   params.goal_pos_coeff =
     static_cast<float>(node.get_parameter(param_name(prefix, "goal_pos_coeff")).as_double());
   params.goal_speed_coeff =
