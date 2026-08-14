@@ -123,14 +123,18 @@ __host__ __device__ void comfortTerms(
 
   longitudinal_jerk = (accel_cmd - accel) / accel_tau;
 
-  steer_rate = clampSteerRate(params, (steer_cmd - steer) / steer_tau);
+  const float raw_steer_rate = (steer_cmd - steer) / steer_tau;
+  steer_rate = raw_steer_rate;  // Penalize unclamped effort in cost function
+  const float clamped_steer_rate = clampSteerRate(params, raw_steer_rate);
+
   const float curvature = tanf(steer) / wheel_base;
 #ifdef __CUDA_ARCH__
   const float sec_sq = 1.0F / fmaxf(cosf(steer) * cosf(steer), 1.0E-6F);
 #else
   const float sec_sq = 1.0F / std::max(std::cos(steer) * std::cos(steer), 1.0E-6F);
 #endif
-  const float curvature_dot = sec_sq * steer_rate / wheel_base;
+  // Physical lateral jerk calculation uses clamped rate limit
+  const float curvature_dot = sec_sq * clamped_steer_rate / wheel_base;
 
   lateral_accel = v * v * curvature;
   lateral_jerk = v * v * curvature_dot + 3.0F * v * accel * curvature;
