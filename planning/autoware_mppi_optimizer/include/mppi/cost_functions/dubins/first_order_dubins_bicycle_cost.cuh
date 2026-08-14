@@ -14,7 +14,6 @@
 template <int NUM_TIMESTEPS>
 struct FirstOrderDubinsBicycleCostParams : public CostParams<2>
 {
-  float desired_speed = 2.5F;
   float speed_coeff = 500.0F;
   float track_coeff = 1000.0F;
   /** Multiplier on track_coeff * track_val in terminalCost (running state cost uses scale 1). */

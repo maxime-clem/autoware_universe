@@ -173,7 +173,7 @@ void FirstOrderDubinsBicycleCostImpl<CLASS_T, NUM_TIMESTEPS, PARAMS_T, DYN_PARAM
   for (int i = 0; i < n; ++i) {
     ref_x_[i] = x[i];
     ref_y_[i] = y[i];
-    ref_v_[i] = v != nullptr ? v[i] : this->params_.desired_speed;
+    ref_v_[i] = v[i];
     if (yaw != nullptr) {
       ref_yaw_[i] = yaw[i];
     } else if (i >= 1) {
@@ -190,7 +190,7 @@ void FirstOrderDubinsBicycleCostImpl<CLASS_T, NUM_TIMESTEPS, PARAMS_T, DYN_PARAM
     for (int i = n; i < NUM_TIMESTEPS; ++i) {
       ref_x_[i] = x[n - 1];
       ref_y_[i] = y[n - 1];
-      ref_v_[i] = v != nullptr ? v[n - 1] : this->params_.desired_speed;
+      ref_v_[i] = v[n - 1];
       ref_yaw_[i] = end_yaw;
     }
   }
@@ -211,8 +211,8 @@ void FirstOrderDubinsBicycleCostImpl<CLASS_T, NUM_TIMESTEPS, PARAMS_T, DYN_PARAM
 }
 
 template <class CLASS_T, int NUM_TIMESTEPS, class PARAMS_T, class DYN_PARAMS_T>
-void FirstOrderDubinsBicycleCostImpl<CLASS_T, NUM_TIMESTEPS, PARAMS_T, DYN_PARAMS_T>::
-  clearLateralCorridor()
+void FirstOrderDubinsBicycleCostImpl<
+  CLASS_T, NUM_TIMESTEPS, PARAMS_T, DYN_PARAMS_T>::clearLateralCorridor()
 {
   num_lateral_corridor_points_ = 0;
   dataToDevice();

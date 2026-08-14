@@ -131,8 +131,6 @@ void applyCostParam(
 {
   if (key == "lambda") {
     params.lambda = value;
-  } else if (key == "desired_speed") {
-    params.desired_speed = value;
   } else if (key == "speed_coeff") {
     params.speed_coeff = value;
   } else if (key == "track_coeff") {

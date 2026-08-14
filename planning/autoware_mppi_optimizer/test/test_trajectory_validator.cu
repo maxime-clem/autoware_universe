@@ -100,7 +100,6 @@ protected:
 TEST_F(TrajectoryValidatorTest, ReportsRunningCostComponentsWithoutChangingTheirSum)
 {
   auto params = makeParams();
-  params.desired_speed = 2.0F;
   params.speed_coeff = 0.0F;
   params.track_coeff = 2.0F;
   params.track_terminal_scale = 0.0F;

@@ -109,7 +109,6 @@ MPPI_MAX_WORST_VIZ_ROLLOUTS = 128
 # Keep in sync with config/mppi_optimizer.param.yaml (overridden by cost_params.csv when present).
 DEFAULT_PARAMS: Dict[str, float] = {
     "lambda": 100.0,
-    "desired_speed": 2.5,
     "speed_coeff": 300.0,
     "track_coeff": 1200.0,
     "track_terminal_scale": 10.0,
@@ -139,7 +138,6 @@ DEFAULT_PARAMS: Dict[str, float] = {
 # vmax must cover yaml / logged values; create_sliders also expands to fit valinit.
 SLIDER_SPECS: List[Tuple[str, float, float]] = [
     ("lambda", 1.0, 20000.0),
-    ("desired_speed", 0.0, 20.0),
     ("track_coeff", 0.0, 10000.0),
     ("track_terminal_scale", 0.0, 50.0),
     ("speed_coeff", 0.0, 5000.0),
