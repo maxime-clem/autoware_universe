@@ -839,6 +839,40 @@ struct FirstOrderDubinsMppiInterface::Impl
     }
   }
 
+  void clampNominalControl()
+  {
+    const int steer_idx = static_cast<int>(FirstOrderDubinsBicycleParams::ControlIndex::STEER_CMD);
+    const int accel_idx =
+      static_cast<int>(FirstOrderDubinsBicycleParams::ControlIndex::ACCELERATION_CMD);
+    const float max_steer = vehicle_params.max_steer_angle;
+    const float max_steer_rate_delta = vehicle_params.steer_rate_lim * kDt;
+    const float min_accel = vehicle_params.min_accel();
+    const float max_accel = vehicle_params.max_accel();
+
+    float prev_steer_cmd;
+    if (delay_steps > 0 && input_delay_buffer.size() > 0) {
+      prev_steer_cmd = input_delay_buffer.back()(steer_idx);
+    } else {
+      prev_steer_cmd = x(static_cast<int>(FirstOrderDubinsBicycleParams::StateIndex::STEER_ANGLE));
+    }
+
+    for (int t = 0; t < kMppiHorizon; ++t) {
+      // Clamp steering
+      float s_cmd = u_nom(steer_idx, t);
+      s_cmd = std::max(-max_steer, std::min(s_cmd, max_steer));
+      s_cmd = std::max(
+        prev_steer_cmd - max_steer_rate_delta,
+        std::min(s_cmd, prev_steer_cmd + max_steer_rate_delta));
+      u_nom(steer_idx, t) = s_cmd;
+      prev_steer_cmd = s_cmd;
+
+      // Clamp acceleration
+      float a_cmd = u_nom(accel_idx, t);
+      a_cmd = std::max(min_accel, std::min(a_cmd, max_accel));
+      u_nom(accel_idx, t) = a_cmd;
+    }
+  }
+
   void snapshotNominalForLog()
   {
     const int accel_idx =
@@ -858,6 +892,7 @@ struct FirstOrderDubinsMppiInterface::Impl
     if (forced_nominal_pending) {
       seedNominalControlFromForced();
       forced_nominal_pending = false;
+      clampNominalControl();
       snapshotNominalForLog();
       return;
     }
@@ -868,10 +903,12 @@ struct FirstOrderDubinsMppiInterface::Impl
     const bool started_from_stop = std::abs(ego_velocity) < kStoppedVelocityMps;
     if (use_last_control_as_nominal && step_count > 0 && !started_from_stop) {
       seedNominalControlFromLastOptimized();
+      clampNominalControl();
       snapshotNominalForLog();
       return;
     }
     seedNominalControlFromDiffusionReference(reference, start_idx);
+    clampNominalControl();
     snapshotNominalForLog();
   }
 
