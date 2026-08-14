@@ -855,21 +855,20 @@ autoware::mppi_optimizer::FirstOrderDubinsMppiCostBreakdown FirstOrderDubinsBicy
   const float vel = y[static_cast<int>(O::TOTAL_VELOCITY)];
   const float track_terminal_scale = terminalTrackScale(vel);
 
-  result.track =
-    this->params_.track_coeff * computeTrackValue(x_pos, y_pos, timestep) * track_terminal_scale;
-  result.heading = this->params_.heading_coeff * computeHeadingValue(yaw, timestep) * 10.0F;
+  result.track = this->params_.track_coeff * computeTrackValue(x_pos, y_pos, timestep);
+  result.heading = this->params_.heading_coeff * computeHeadingValue(yaw, timestep);
   const float lateral_deviation = computeLateralDistanceValue(x_pos, y_pos);
-  result.lateral_distance = this->params_.lateral_distance_coeff * lateral_deviation * 10.0F;
+  result.lateral_distance = this->params_.lateral_distance_coeff * lateral_deviation;
   result.lateral_boundary = computeLateralBoundaryCost(lateral_deviation);
   result.lateral_yaw_error =
-    this->params_.lateral_yaw_error_coeff * computeLateralYawErrorValue(x_pos, y_pos, yaw) * 10.0F;
-  result.track_center = this->params_.track_center_coeff *
-                        computeTrackCenterValue(x_pos, y_pos, yaw, timestep) * track_terminal_scale;
+    this->params_.lateral_yaw_error_coeff * computeLateralYawErrorValue(x_pos, y_pos, yaw);
+  result.track_center =
+    this->params_.track_center_coeff * computeTrackCenterValue(x_pos, y_pos, yaw, timestep);
   result.corner_buffer = computeCornerBufferCost(x_pos, y_pos, yaw);
   computeGradualCrashCosts(
     x_pos, y_pos, yaw, timestep, result.drivable_area, result.obstacle, result.road_border);
 
-  result.terminal_total = result.componentTotal();
+  result.terminal_total = result.componentTotal() * track_terminal_scale;
   result.total = result.terminal_total;
   return result;
 }
@@ -987,27 +986,27 @@ FirstOrderDubinsBicycleCostImpl<CLASS_T, NUM_TIMESTEPS, PARAMS_T, DYN_PARAMS_T>:
   const float vel = y[static_cast<int>(O::TOTAL_VELOCITY)];
   const float track_terminal_scale = terminalTrackScale(vel);
   const float track_val = computeTrackValue(x_pos, y_pos, NUM_TIMESTEPS - 1);
-  const float track_cost = this->params_.track_coeff * track_val * track_terminal_scale;
+  const float track_cost = this->params_.track_coeff * track_val;
   const float heading_cost =
-    this->params_.heading_coeff * computeHeadingValue(yaw, NUM_TIMESTEPS - 1) * 10.0F;
+    this->params_.heading_coeff * computeHeadingValue(yaw, NUM_TIMESTEPS - 1);
   const float lateral_deviation = computeLateralDistanceValue(x_pos, y_pos);
   const float lateral_distance_cost =
     this->params_.lateral_distance_coeff * lateral_deviation * 10.0F;
   const float lateral_boundary_cost = computeLateralBoundaryCost(lateral_deviation);
   const float lateral_yaw_error_cost =
-    this->params_.lateral_yaw_error_coeff * computeLateralYawErrorValue(x_pos, y_pos, yaw) * 10.0F;
+    this->params_.lateral_yaw_error_coeff * computeLateralYawErrorValue(x_pos, y_pos, yaw);
   const float track_center_cost = this->params_.track_center_coeff *
-                                  computeTrackCenterValue(x_pos, y_pos, yaw, NUM_TIMESTEPS - 1) *
-                                  track_terminal_scale;
+                                  computeTrackCenterValue(x_pos, y_pos, yaw, NUM_TIMESTEPS - 1);
   const float corner_buffer_cost = computeCornerBufferCost(x_pos, y_pos, yaw);
   float drivable_area_cost = 0.0F;
   float obstacle_cost = 0.0F;
   float road_border_cost = 0.0F;
   computeGradualCrashCosts(
     x_pos, y_pos, yaw, NUM_TIMESTEPS - 1, drivable_area_cost, obstacle_cost, road_border_cost);
-  return track_cost + heading_cost + lateral_distance_cost + lateral_boundary_cost +
-         lateral_yaw_error_cost + drivable_area_cost + obstacle_cost + road_border_cost +
-         track_center_cost + corner_buffer_cost;
+  return (track_cost + heading_cost + lateral_distance_cost + lateral_boundary_cost +
+          lateral_yaw_error_cost + drivable_area_cost + obstacle_cost + road_border_cost +
+          track_center_cost + corner_buffer_cost) *
+         track_terminal_scale;
 }
 
 template <class CLASS_T, int NUM_TIMESTEPS, class PARAMS_T, class DYN_PARAMS_T>
