@@ -659,12 +659,14 @@ void DiffusionPlanner::on_timer()
         std::abs(vehicle_info_.max_longitudinal_offset_m));
       const double max_lateral_offset = std::max(
         std::abs(vehicle_info_.min_lateral_offset_m), std::abs(vehicle_info_.max_lateral_offset_m));
-      // MPPI expands both ego OBB half-axes by obstacle_collision_margin. Use the radius of that
-      // expanded box so this circular prefilter cannot discard an object that the OBB test could
-      // collide with, including near an expanded corner.
-      mppi_object_filter_margin_m_ = std::hypot(
+      // Cover both the hard validator's axis-expanded OBB and the optimizer's Euclidean barrier
+      // envelope so the circular prefilter cannot discard an object relevant to either check.
+      const double collision_envelope_radius = std::hypot(
         max_longitudinal_offset + cost_params.obstacle_collision_margin,
         max_lateral_offset + cost_params.obstacle_collision_margin);
+      const double barrier_envelope_radius =
+        std::hypot(max_longitudinal_offset, max_lateral_offset) + cost_params.obstacle_safe_margin;
+      mppi_object_filter_margin_m_ = std::max(collision_envelope_radius, barrier_envelope_radius);
       const double max_vehicle_delay_s =
         std::max(vehicle_params.acc_time_delay, vehicle_params.steer_time_delay);
       const double delay_steps =
@@ -858,13 +860,14 @@ void DiffusionPlanner::publish_mppi_cost_diagnostics(
   diagnostics_mppi_cost_->add_key_value("state/track_center", cost.track_center);
   diagnostics_mppi_cost_->add_key_value("state/corner_buffer", cost.corner_buffer);
   diagnostics_mppi_cost_->add_key_value("state/drivable_area", cost.drivable_area);
+  diagnostics_mppi_cost_->add_key_value("state/obstacle", cost.obstacle);
+  diagnostics_mppi_cost_->add_key_value("state/road_border", cost.road_border);
   diagnostics_mppi_cost_->add_key_value("control/acceleration_command", cost.acceleration_command);
   diagnostics_mppi_cost_->add_key_value("control/steering_command", cost.steering_command);
   diagnostics_mppi_cost_->add_key_value("comfort/lateral_acceleration", cost.lateral_acceleration);
   diagnostics_mppi_cost_->add_key_value("comfort/lateral_jerk", cost.lateral_jerk);
   diagnostics_mppi_cost_->add_key_value("comfort/longitudinal_jerk", cost.longitudinal_jerk);
   diagnostics_mppi_cost_->add_key_value("comfort/steering_rate", cost.steering_rate);
-  diagnostics_mppi_cost_->add_key_value("crash", cost.crash);
   diagnostics_mppi_cost_->add_key_value(
     "validation_reason", autoware::mppi_optimizer::to_string(debug.validation.reasons));
   diagnostics_mppi_cost_->add_key_value(
