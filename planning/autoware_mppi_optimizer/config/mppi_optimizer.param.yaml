@@ -4,13 +4,13 @@
 
     # FirstOrderDubinsBicycleCostParams (see first_order_dubins_bicycle_cost.cuh)
     lambda: 500.0
-    speed_coeff: 300.0
+    speed_coeff: 10000.0
     track_coeff: 0.0
     track_terminal_scale: 0.0
     heading_coeff: 0.0
     # Spatial (closest-segment) costs restored from pre time-indexed tracking; 0 = off.
-    lateral_distance_coeff: 100.0
-    lateral_yaw_error_coeff: 10.0
+    lateral_distance_coeff: 0.0
+    lateral_yaw_error_coeff: 0.0
     # Track the center of the ego footprint against the time-indexed reference; 0 = off.
     track_center_coeff: 0.0
     # Soft clearance cost for ego corners near drivable-area boundaries; 0 = off.
@@ -37,10 +37,10 @@
     max_crash_penalty: 100000.0
 
     # Penalized-spline roughness weight for cold-start nominal steering (0 = interpolation).
-    nominal_spline_smoothing_weight: 1000.0
+    nominal_spline_smoothing_weight: 100.0
 
     # Standard deviation of sampled curvature (converted to steering angle using wheelbase).
-    curvature_std: 0.00625
+    curvature_std: 0.00925
 
 
     # Optional offline debug logging for mppi_debug_visualizer.py --log-dir
