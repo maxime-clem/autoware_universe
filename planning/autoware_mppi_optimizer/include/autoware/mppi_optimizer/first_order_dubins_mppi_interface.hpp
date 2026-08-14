@@ -221,7 +221,7 @@ public:
   /** Configure MPPI cost weights (FirstOrderDubinsBicycleCostParams). */
   void setCostParams(const FirstOrderDubinsMppiCostParams & params);
 
-  /** Configure debug logging and ablation options. */
+  /** Configure sampler, debug logging, and ablation options. */
   void setRuntimeOptions(const FirstOrderDubinsMppiRuntimeOptions & options);
 
   /**
