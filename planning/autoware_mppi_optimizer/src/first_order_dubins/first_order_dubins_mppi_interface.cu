@@ -623,8 +623,7 @@ struct FirstOrderDubinsMppiInterface::Impl
     // a zero (or explicit) steer seed, not from huge white noise.
     // Historical: 0.001 * (L/0.32) ≈ 0.015 rad on j6; 0.01 * (L/0.32) ≈ 0.15 rad was too noisy.
     constexpr float kReferenceSteerStd = 3e-3F;
-    const float steer_std =
-      kReferenceSteerStd * (vehicle_params.wheel_base / vehicle_params.wheel_base);
+    const float steer_std = kReferenceSteerStd * (vehicle_params.wheel_base / 0.32);
 
     sp.std_dev[static_cast<int>(FirstOrderDubinsBicycleParams::ControlIndex::STEER_CMD)] =
       steer_std;
