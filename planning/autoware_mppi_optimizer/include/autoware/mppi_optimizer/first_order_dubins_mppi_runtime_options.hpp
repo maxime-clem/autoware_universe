@@ -20,9 +20,11 @@
 namespace autoware::mppi_optimizer
 {
 
-/** Debug logging and ablation options from mppi_optimizer.param.yaml. */
+/** Sampler, debug logging, and ablation options from mppi_optimizer.param.yaml. */
 struct FirstOrderDubinsMppiRuntimeOptions
 {
+  /** Standard deviation of sampled curvature; converted to steering by multiplying wheelbase. */
+  float curvature_std{0.00625F};
   bool enable_debug_trajectory_log{false};
   /** Empty -> $XDG_CACHE_HOME/autoware/mppi_debug_log or $HOME/.cache/autoware/mppi_debug_log. */
   std::string debug_trajectory_log_directory;

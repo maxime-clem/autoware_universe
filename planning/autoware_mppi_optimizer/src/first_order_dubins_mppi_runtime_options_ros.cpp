@@ -32,6 +32,7 @@ void declare_first_order_dubins_mppi_runtime_options(
   rclcpp::Node & node, const std::string & prefix)
 {
   const FirstOrderDubinsMppiRuntimeOptions defaults;
+  node.declare_parameter(param_name(prefix, "curvature_std"), defaults.curvature_std);
   node.declare_parameter(
     param_name(prefix, "enable_debug_trajectory_log"), defaults.enable_debug_trajectory_log);
   node.declare_parameter(
@@ -49,6 +50,8 @@ FirstOrderDubinsMppiRuntimeOptions get_first_order_dubins_mppi_runtime_options(
   const rclcpp::Node & node, const std::string & prefix)
 {
   FirstOrderDubinsMppiRuntimeOptions options;
+  options.curvature_std =
+    static_cast<float>(node.get_parameter(param_name(prefix, "curvature_std")).as_double());
   options.enable_debug_trajectory_log =
     node.get_parameter(param_name(prefix, "enable_debug_trajectory_log")).as_bool();
   options.debug_trajectory_log_directory =

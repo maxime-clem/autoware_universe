@@ -403,6 +403,10 @@ inline bool loadMppiDebugRuntimeOptionsCsv(
     }
     return it->second != 0.0F;
   };
+  const auto curvature_std_it = kv.find("curvature_std");
+  if (curvature_std_it != kv.end()) {
+    options.curvature_std = curvature_std_it->second;
+  }
   options.ignore_obstacles = as_bool("ignore_obstacles", options.ignore_obstacles);
   options.ignore_drivable_area = as_bool("ignore_drivable_area", options.ignore_drivable_area);
   options.force_cold_start_each_step =

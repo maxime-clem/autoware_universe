@@ -516,6 +516,7 @@ struct FirstOrderDubinsMppiInterface::Impl
   int step_count{0};
   size_t tracking_start_idx{0U};
   float sim_time{0.0F};
+  float curvature_std{0.00625F};
   bool ignore_obstacles{false};
   bool ignore_drivable_area{false};
   bool force_cold_start_each_step{false};
@@ -606,13 +607,7 @@ struct FirstOrderDubinsMppiInterface::Impl
     SAMPLER::SAMPLING_PARAMS_T sp{};
     sp.std_dev[static_cast<int>(FirstOrderDubinsBicycleParams::ControlIndex::ACCELERATION_CMD)] =
       0.35F;
-    // Steer exploration: keep modest. Large i.i.d. Gaussian std injects high-frequency δ_cmd
-    // jitter into the importance-weighted average. Lateral reach comes from optimizing around
-    // a zero (or explicit) steer seed, not from huge white noise.
-    // Historical: 0.001 * (L/0.32) ≈ 0.015 rad on j6; 0.01 * (L/0.32) ≈ 0.15 rad was too noisy.
-    constexpr float kReferenceSteerStd = 3e-3F;
-    const float steer_std =
-      kReferenceSteerStd * (vehicle_params.wheel_base / vehicle_params.wheel_base);
+    const float steer_std = curvature_std * vehicle_params.wheel_base;
 
     sp.std_dev[static_cast<int>(FirstOrderDubinsBicycleParams::ControlIndex::STEER_CMD)] =
       steer_std;
@@ -1120,6 +1115,13 @@ void FirstOrderDubinsMppiInterface::setCostParams(const FirstOrderDubinsMppiCost
 void FirstOrderDubinsMppiInterface::setRuntimeOptions(
   const FirstOrderDubinsMppiRuntimeOptions & options)
 {
+  if (!impl_) {
+    throw std::runtime_error("FirstOrderDubinsMppiInterface implementation is missing");
+  }
+  if (impl_->initialized && impl_->curvature_std != options.curvature_std) {
+    impl_->teardown();
+  }
+  impl_->curvature_std = options.curvature_std;
   setDebugTrajectoryLogging(
     options.enable_debug_trajectory_log, options.debug_trajectory_log_directory);
   setAblationOptions(
@@ -1157,6 +1159,7 @@ void FirstOrderDubinsMppiInterface::setAblationOptions(
     force_cold_start_each_step ? "true" : "false", skip_if_invalid ? "true" : "false",
     use_last_control_as_nominal ? "true" : "false");
   FirstOrderDubinsMppiRuntimeOptions runtime{};
+  runtime.curvature_std = impl_->curvature_std;
   runtime.ignore_obstacles = ignore_obstacles;
   runtime.ignore_drivable_area = ignore_drivable_area;
   runtime.force_cold_start_each_step = force_cold_start_each_step;
@@ -1432,8 +1435,8 @@ FirstOrderDubinsMppiOptimizationResult FirstOrderDubinsMppiInterface::optimizeTr
     result.debug.rollouts.clear();
   }
   if (n_state > 0 && n_ctrl > 0) {
-    result.debug.cost_breakdown = reconstructSelectedTrajectoryCost(
-      impl_->cost, impl_->model, state_trajectory, u_opt_traj);
+    result.debug.cost_breakdown =
+      reconstructSelectedTrajectoryCost(impl_->cost, impl_->model, state_trajectory, u_opt_traj);
   }
 
   MppiDebugEgoState ego;

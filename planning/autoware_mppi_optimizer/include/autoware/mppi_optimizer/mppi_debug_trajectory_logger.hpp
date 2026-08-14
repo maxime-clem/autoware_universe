@@ -197,6 +197,7 @@ public:
     std::ofstream out(directory_ + "/runtime_options.csv");
     if (out) {
       out << "key,value\n";
+      out << "curvature_std," << options.curvature_std << "\n";
       out << "ignore_obstacles," << (options.ignore_obstacles ? 1 : 0) << "\n";
       out << "ignore_drivable_area," << (options.ignore_drivable_area ? 1 : 0) << "\n";
       out << "force_cold_start_each_step," << (options.force_cold_start_each_step ? 1 : 0) << "\n";

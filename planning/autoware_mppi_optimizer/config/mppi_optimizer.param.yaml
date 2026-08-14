@@ -30,6 +30,9 @@
     nominal_curvature_min_chord_length_m: 1.5
     drivable_area_crossing_coeff: 10.0
 
+    # Standard deviation of sampled curvature (converted to steering angle using wheelbase).
+    curvature_std: 0.00625
+
     # Optional offline debug logging for mppi_debug_visualizer.py --log-dir
     # Empty directory resolves to $XDG_CACHE_HOME/autoware/mppi_debug_log
     # (or $HOME/.cache/autoware/mppi_debug_log).
