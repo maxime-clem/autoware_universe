@@ -170,10 +170,38 @@ if(CUDA_AVAIL AND TRT_AVAIL)
     set_target_properties(test_mppi_trajectory_validator PROPERTIES
       CXX_STANDARD 17
       CUDA_STANDARD 17
-      COMPILE_OPTIONS "-Xcudafe;--diag_suppress=177"
+    )
+    target_compile_options(test_mppi_trajectory_validator PRIVATE 
+      $<$<COMPILE_LANGUAGE:CUDA>:-Xcudafe>
+      $<$<COMPILE_LANGUAGE:CUDA>:--diag_suppress=177>
     )
     ament_add_gtest_test(test_mppi_trajectory_validator)
     set_tests_properties(test_mppi_trajectory_validator PROPERTIES
+      LABELS "gpu"
+      TIMEOUT 60
+    )
+
+    cuda_add_executable(test_cost_functions
+      test/test_cost_functions.cu
+    )
+    target_link_libraries(test_cost_functions
+      first_order_dubins_mppi
+      ${GTEST_LIBRARIES}
+      ${GTEST_MAIN_LIBRARIES}
+    )
+    target_include_directories(test_cost_functions SYSTEM PRIVATE
+      ${GTEST_INCLUDE_DIRS}
+    )
+    set_target_properties(test_cost_functions PROPERTIES
+      CXX_STANDARD 17
+      CUDA_STANDARD 17
+    )
+    target_compile_options(test_cost_functions PRIVATE 
+      $<$<COMPILE_LANGUAGE:CUDA>:-Xcudafe>
+      $<$<COMPILE_LANGUAGE:CUDA>:--diag_suppress=177>
+    )
+    ament_add_gtest_test(test_cost_functions)
+    set_tests_properties(test_cost_functions PROPERTIES
       LABELS "gpu"
       TIMEOUT 60
     )
