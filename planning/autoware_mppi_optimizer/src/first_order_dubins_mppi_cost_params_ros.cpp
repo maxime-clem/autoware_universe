@@ -46,9 +46,6 @@ void declare_first_order_dubins_mppi_cost_params(rclcpp::Node & node, const std:
   node.declare_parameter(param_name(prefix, "boundary_threshold"), defaults.boundary_threshold);
   node.declare_parameter(
     param_name(prefix, "lateral_boundary_soft_margin"), defaults.lateral_boundary_soft_margin);
-  node.declare_parameter(
-    param_name(prefix, "lateral_boundary_barrier_weight"),
-    defaults.lateral_boundary_barrier_weight);
   node.declare_parameter(param_name(prefix, "accel_cmd_coeff"), defaults.accel_cmd_coeff);
   node.declare_parameter(param_name(prefix, "steer_cmd_coeff"), defaults.steer_cmd_coeff);
   node.declare_parameter(param_name(prefix, "steer_rate_coeff"), defaults.steer_rate_coeff);
@@ -66,11 +63,7 @@ void declare_first_order_dubins_mppi_cost_params(rclcpp::Node & node, const std:
     param_name(prefix, "road_border_collision_margin"), defaults.road_border_collision_margin);
   node.declare_parameter(param_name(prefix, "obstacle_safe_margin"), defaults.obstacle_safe_margin);
   node.declare_parameter(
-    param_name(prefix, "obstacle_barrier_weight"), defaults.obstacle_barrier_weight);
-  node.declare_parameter(
     param_name(prefix, "road_border_safe_margin"), defaults.road_border_safe_margin);
-  node.declare_parameter(
-    param_name(prefix, "road_border_barrier_weight"), defaults.road_border_barrier_weight);
   node.declare_parameter(
     param_name(prefix, "drivable_area_safe_margin"), defaults.drivable_area_safe_margin);
   node.declare_parameter(
@@ -109,8 +102,6 @@ FirstOrderDubinsMppiCostParams get_first_order_dubins_mppi_cost_params(
     static_cast<float>(node.get_parameter(param_name(prefix, "boundary_threshold")).as_double());
   params.lateral_boundary_soft_margin = static_cast<float>(
     node.get_parameter(param_name(prefix, "lateral_boundary_soft_margin")).as_double());
-  params.lateral_boundary_barrier_weight = static_cast<float>(
-    node.get_parameter(param_name(prefix, "lateral_boundary_barrier_weight")).as_double());
   params.accel_cmd_coeff =
     static_cast<float>(node.get_parameter(param_name(prefix, "accel_cmd_coeff")).as_double());
   params.steer_cmd_coeff =
@@ -131,12 +122,8 @@ FirstOrderDubinsMppiCostParams get_first_order_dubins_mppi_cost_params(
     node.get_parameter(param_name(prefix, "road_border_collision_margin")).as_double());
   params.obstacle_safe_margin =
     static_cast<float>(node.get_parameter(param_name(prefix, "obstacle_safe_margin")).as_double());
-  params.obstacle_barrier_weight = static_cast<float>(
-    node.get_parameter(param_name(prefix, "obstacle_barrier_weight")).as_double());
   params.road_border_safe_margin = static_cast<float>(
     node.get_parameter(param_name(prefix, "road_border_safe_margin")).as_double());
-  params.road_border_barrier_weight = static_cast<float>(
-    node.get_parameter(param_name(prefix, "road_border_barrier_weight")).as_double());
   params.drivable_area_safe_margin = static_cast<float>(
     node.get_parameter(param_name(prefix, "drivable_area_safe_margin")).as_double());
   params.drivable_area_barrier_weight = static_cast<float>(

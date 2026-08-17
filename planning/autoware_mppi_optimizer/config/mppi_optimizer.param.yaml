@@ -3,7 +3,7 @@
     # Vehicle actuation dynamics are loaded from $(vehicle_model)_description/config/simulator_model.param.yaml
 
     # FirstOrderDubinsBicycleCostParams (see first_order_dubins_bicycle_cost.cuh)
-    lambda: 500.0
+    lambda: 100.0
     speed_coeff: 10000.0
     track_coeff: 0.0
     track_terminal_scale: 0.0
@@ -18,7 +18,6 @@
     corner_safe_margin: 0.3
     boundary_threshold: 0.8  # Trajectory becomes invalid if laterally deviating beyond this value
     lateral_boundary_soft_margin: 0.2 # Gradual barrier begins this far inside the hard lateral rejection threshold.
-    lateral_boundary_barrier_weight: 20000.0
     lateral_acceleration_coeff: 1.0
     lateral_acceleration_coeff: 1000.0
     lateral_jerk_coeff: 1000.0
@@ -29,9 +28,7 @@
     obstacle_collision_margin: 0.2
     road_border_collision_margin: 0.3
     obstacle_safe_margin: 0.5
-    obstacle_barrier_weight: 20000.0
     road_border_safe_margin: 0.3
-    road_border_barrier_weight: 20000.0
     drivable_area_safe_margin: 0.0
     drivable_area_barrier_weight: 10.0
     max_crash_penalty: 100000.0

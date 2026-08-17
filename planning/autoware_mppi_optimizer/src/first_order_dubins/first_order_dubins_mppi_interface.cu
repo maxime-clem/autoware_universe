@@ -200,7 +200,9 @@ void applyUserCostParams(
   cost_params.corner_safe_margin = user.corner_safe_margin;
   cost_params.boundary_threshold = user.boundary_threshold;
   cost_params.lateral_boundary_soft_margin = user.lateral_boundary_soft_margin;
-  cost_params.lateral_boundary_barrier_weight = user.lateral_boundary_barrier_weight;
+  cost_params.lateral_boundary_barrier_weight =
+    user.max_crash_penalty /
+    (user.lateral_boundary_soft_margin * user.lateral_boundary_soft_margin);
   cost_params.accel_cmd_coeff = user.accel_cmd_coeff;
   cost_params.steer_cmd_coeff = user.steer_cmd_coeff;
   cost_params.steer_rate_coeff = user.steer_rate_coeff;
@@ -210,9 +212,11 @@ void applyUserCostParams(
   cost_params.obstacle_collision_margin = user.obstacle_collision_margin;
   cost_params.road_border_collision_margin = user.road_border_collision_margin;
   cost_params.obstacle_safe_margin = user.obstacle_safe_margin;
-  cost_params.obstacle_barrier_weight = user.obstacle_barrier_weight;
+  cost_params.obstacle_barrier_weight =
+    user.max_crash_penalty / (user.obstacle_safe_margin * user.obstacle_safe_margin);
   cost_params.road_border_safe_margin = user.road_border_safe_margin;
-  cost_params.road_border_barrier_weight = user.road_border_barrier_weight;
+  cost_params.road_border_barrier_weight =
+    user.max_crash_penalty / (user.road_border_safe_margin * user.road_border_safe_margin);
   cost_params.drivable_area_safe_margin = user.drivable_area_safe_margin;
   cost_params.drivable_area_barrier_weight = user.drivable_area_barrier_weight;
   cost_params.max_crash_penalty = user.max_crash_penalty;

@@ -454,7 +454,7 @@ __host__ __device__ float FirstOrderDubinsBicycleCostImpl<
   const float distance_to_limit = this->params_.boundary_threshold - lateral_deviation;
   return computeSmoothBarrierCost(
     distance_to_limit, this->params_.lateral_boundary_soft_margin,
-    this->params_.lateral_boundary_barrier_weight, this->params_.max_crash_penalty);
+    this->params_.lateral_boundary_barrier_weight);
 }
 
 template <class CLASS_T, int NUM_TIMESTEPS, class PARAMS_T, class DYN_PARAMS_T>
@@ -772,13 +772,13 @@ FirstOrderDubinsBicycleCostImpl<CLASS_T, NUM_TIMESTEPS, PARAMS_T, DYN_PARAMS_T>:
 {
   drivable_area_cost = computeSmoothBarrierCost(
     distanceToDrivableArea(x, y, yaw), this->params_.drivable_area_safe_margin,
-    this->params_.drivable_area_barrier_weight, this->params_.max_crash_penalty);
+    this->params_.drivable_area_barrier_weight);
   obstacle_cost = computeSmoothBarrierCost(
     distanceToClosestObstacle(x, y, yaw, timestep), this->params_.obstacle_safe_margin,
-    this->params_.obstacle_barrier_weight, this->params_.max_crash_penalty);
+    this->params_.obstacle_barrier_weight);
   road_border_cost = computeSmoothBarrierCost(
     distanceToRoadBorder(x, y, yaw), this->params_.road_border_safe_margin,
-    this->params_.road_border_barrier_weight, this->params_.max_crash_penalty);
+    this->params_.road_border_barrier_weight);
 }
 
 template <class CLASS_T, int NUM_TIMESTEPS, class PARAMS_T, class DYN_PARAMS_T>

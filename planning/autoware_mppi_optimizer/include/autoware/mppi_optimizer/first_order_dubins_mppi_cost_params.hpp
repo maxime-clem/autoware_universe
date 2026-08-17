@@ -35,7 +35,7 @@ struct FirstOrderDubinsMppiCostParams
   float boundary_threshold{1.5F};
   /** Distance inside boundary_threshold at which the gradual lateral barrier activates. */
   float lateral_boundary_soft_margin{0.2F};
-  float lateral_boundary_barrier_weight{2000.0F};
+  float lateral_boundary_barrier_weight{};
   float accel_cmd_coeff{0.0F};
   float steer_cmd_coeff{0.0F};
   float steer_rate_coeff{0.0F};
@@ -47,9 +47,9 @@ struct FirstOrderDubinsMppiCostParams
   float obstacle_collision_margin{0.5F};
   float road_border_collision_margin{0.3F};
   float obstacle_safe_margin{0.5F};
-  float obstacle_barrier_weight{2000.0F};
+  float obstacle_barrier_weight{};
   float road_border_safe_margin{0.3F};
-  float road_border_barrier_weight{2000.0F};
+  float road_border_barrier_weight{};
   float drivable_area_safe_margin{0.0F};
   float drivable_area_barrier_weight{2000.0F};
   float max_crash_penalty{100000.0F};
