@@ -42,6 +42,8 @@ void declare_first_order_dubins_mppi_runtime_options(
     param_name(prefix, "force_cold_start_each_step"), defaults.force_cold_start_each_step);
   node.declare_parameter(param_name(prefix, "skip_if_invalid"), defaults.skip_if_invalid);
   node.declare_parameter(
+    param_name(prefix, "min_optimization_length"), defaults.min_optimization_length);
+  node.declare_parameter(
     param_name(prefix, "use_last_control_as_nominal"), defaults.use_last_control_as_nominal);
   node.declare_parameter(
     param_name(prefix, "use_temporal_mpt_as_nominal"), defaults.use_temporal_mpt_as_nominal);
@@ -64,6 +66,8 @@ FirstOrderDubinsMppiRuntimeOptions get_first_order_dubins_mppi_runtime_options(
   options.force_cold_start_each_step =
     node.get_parameter(param_name(prefix, "force_cold_start_each_step")).as_bool();
   options.skip_if_invalid = node.get_parameter(param_name(prefix, "skip_if_invalid")).as_bool();
+  options.min_optimization_length = static_cast<float>(
+    node.get_parameter(param_name(prefix, "min_optimization_length")).as_double());
   options.use_last_control_as_nominal =
     node.get_parameter(param_name(prefix, "use_last_control_as_nominal")).as_bool();
   options.use_temporal_mpt_as_nominal =

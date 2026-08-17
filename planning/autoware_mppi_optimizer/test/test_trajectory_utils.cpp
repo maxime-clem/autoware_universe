@@ -72,14 +72,17 @@ TEST(TrajectoryEligibility, SkipsOnlyTrajectoriesThatAreBothShortAndStopping)
 {
   auto short_stopping = makeTrajectory(3U, 1.0, 1.0F);
   short_stopping.points[1].longitudinal_velocity_mps = 0.0F;
-  EXPECT_FALSE(isOptimizationRequired(short_stopping));
+  EXPECT_FALSE(isOptimizationRequired(short_stopping, 4.0));
 
   auto short_moving = makeTrajectory(3U, 1.0, 0.02F);
-  EXPECT_TRUE(isOptimizationRequired(short_moving));
+  EXPECT_TRUE(isOptimizationRequired(short_moving, 4.0));
 
   auto long_stopping = makeTrajectory(3U, 2.0, 1.0F);
   long_stopping.points[1].longitudinal_velocity_mps = 0.0F;
-  EXPECT_TRUE(isOptimizationRequired(long_stopping));
+  EXPECT_TRUE(isOptimizationRequired(long_stopping, 4.0));
+
+  EXPECT_TRUE(isOptimizationRequired(short_stopping, 0.0));
+  EXPECT_TRUE(isOptimizationRequired(short_stopping, 2.0));
 }
 
 TEST(InitialState, UsesOdometryDefaultsAndClampsOptionalVehicleState)

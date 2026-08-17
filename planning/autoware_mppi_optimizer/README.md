@@ -69,6 +69,7 @@ Various features can be disabled by changing the following parameters set in `mp
 ignore_obstacles: true
 ignore_drivable_area: true
 force_cold_start_each_step: true
+min_optimization_length: 0.0
 use_last_control_as_nominal: true
 ```
 
@@ -81,6 +82,8 @@ Notes:
   disabled in the cost (`isEgoOutsideDrivableArea` always false).
 - `force_cold_start_each_step` only resets tracking counters / arc-length (control is already
   re-seeded via `updateImportanceSampler(u_nom)` each cycle).
+- `min_optimization_length` skips MPPI for a stopping reference shorter than the configured arc
+  length in meters; `0.0` disables the length-based skip.
 - `use_last_control_as_nominal` warm-starts `u_nom` from the shifted previous optimized control
   sequence when available; otherwise (and on cold start) reseeds from the diffusion reference.
 

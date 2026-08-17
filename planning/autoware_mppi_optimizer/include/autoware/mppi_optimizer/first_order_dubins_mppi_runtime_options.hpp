@@ -30,6 +30,8 @@ struct FirstOrderDubinsMppiRuntimeOptions
   bool ignore_drivable_area{false};
   bool force_cold_start_each_step{false};
   bool skip_if_invalid{false};
+  /** Skip optimization for stopping trajectories shorter than this arc length in meters. */
+  float min_optimization_length{0.0F};
   /** Warm-start u_nom from shifted previous optimized controls (else reseed from DP each cycle). */
   bool use_last_control_as_nominal{false};
   /**

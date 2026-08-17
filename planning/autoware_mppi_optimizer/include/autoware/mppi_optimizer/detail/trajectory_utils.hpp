@@ -61,7 +61,7 @@ struct OptimizedState
   float steering{0.0F};
 };
 
-[[nodiscard]] bool isOptimizationRequired(const Trajectory & trajectory);
+[[nodiscard]] bool isOptimizationRequired(const Trajectory & trajectory, double min_length);
 
 void setInitialEngageVelocity(Trajectory & trajectory);
 

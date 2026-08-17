@@ -38,7 +38,7 @@ geometry_msgs::msg::Quaternion quaternionFromYaw(const float yaw)
 
 }  // namespace
 
-bool isOptimizationRequired(const Trajectory & trajectory)
+bool isOptimizationRequired(const Trajectory & trajectory, const double min_length)
 {
   const bool is_stopping = std::any_of(
     trajectory.points.begin(), trajectory.points.end(),
@@ -50,8 +50,7 @@ bool isOptimizationRequired(const Trajectory & trajectory)
       trajectory.points[i].pose.position.x - trajectory.points[i + 1U].pose.position.x,
       trajectory.points[i].pose.position.y - trajectory.points[i + 1U].pose.position.y);
   }
-  const bool is_short = length < 4.0;
-  return !is_stopping || !is_short;
+  return !is_stopping || !(length < min_length);
 }
 
 void setInitialEngageVelocity(Trajectory & trajectory)

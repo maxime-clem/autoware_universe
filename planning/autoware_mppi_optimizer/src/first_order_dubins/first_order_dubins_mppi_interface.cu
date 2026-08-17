@@ -653,6 +653,7 @@ struct FirstOrderDubinsMppiInterface::Impl
   bool ignore_drivable_area{false};
   bool force_cold_start_each_step{false};
   bool skip_if_invalid{false};
+  float min_optimization_length{0.0F};
   /** Warm-start u_nom from shifted previous u_opt when available. */
   bool use_last_control_as_nominal{false};
   /** Cold-seed u_nom from acados temporal MPT instead of geometric diffusion seed. */
@@ -1374,6 +1375,9 @@ void FirstOrderDubinsMppiInterface::setCostParams(const FirstOrderDubinsMppiCost
 void FirstOrderDubinsMppiInterface::setRuntimeOptions(
   const FirstOrderDubinsMppiRuntimeOptions & options)
 {
+  if (!impl_) {
+    throw std::runtime_error("FirstOrderDubinsMppiInterface implementation is missing");
+  }
   setDebugTrajectoryLogging(
     options.enable_debug_trajectory_log, options.debug_trajectory_log_directory);
   setAblationOptions(
@@ -1384,6 +1388,7 @@ void FirstOrderDubinsMppiInterface::setRuntimeOptions(
   }
   impl_->use_temporal_mpt_as_nominal = options.use_temporal_mpt_as_nominal;
   impl_->enable_input_delay_compensation = options.enable_input_delay_compensation;
+  impl_->min_optimization_length = options.min_optimization_length;
   if (impl_->initialized) {
     impl_->syncDelayStepsToModel();
     if (!impl_->enable_input_delay_compensation) {
@@ -1434,6 +1439,7 @@ void FirstOrderDubinsMppiInterface::setAblationOptions(
   runtime.ignore_drivable_area = ignore_drivable_area;
   runtime.force_cold_start_each_step = force_cold_start_each_step;
   runtime.skip_if_invalid = skip_if_invalid;
+  runtime.min_optimization_length = impl_->min_optimization_length;
   runtime.use_last_control_as_nominal = use_last_control_as_nominal;
   runtime.use_temporal_mpt_as_nominal = impl_->use_temporal_mpt_as_nominal;
   runtime.enable_input_delay_compensation = impl_->enable_input_delay_compensation;
@@ -1573,7 +1579,8 @@ FirstOrderDubinsMppiOptimizationResult FirstOrderDubinsMppiInterface::optimizeTr
   }
   FirstOrderDubinsMppiOptimizationResult result;
   const auto not_enough_input_points = input.points.size() < 2U;
-  const auto optimization_required = detail::isOptimizationRequired(input);
+  const auto optimization_required =
+    detail::isOptimizationRequired(input, impl_->min_optimization_length);
   if (not_enough_input_points || !optimization_required) {
     RCLCPP_WARN(
       mppiLogger(), "MPPI skipped: %s",
@@ -1736,6 +1743,7 @@ FirstOrderDubinsMppiOptimizationResult FirstOrderDubinsMppiInterface::optimizeTr
     runtime.ignore_drivable_area = impl_->ignore_drivable_area;
     runtime.force_cold_start_each_step = impl_->force_cold_start_each_step;
     runtime.skip_if_invalid = impl_->skip_if_invalid;
+    runtime.min_optimization_length = impl_->min_optimization_length;
     runtime.use_last_control_as_nominal = impl_->use_last_control_as_nominal;
     runtime.use_temporal_mpt_as_nominal = impl_->use_temporal_mpt_as_nominal;
     runtime.enable_input_delay_compensation = impl_->enable_input_delay_compensation;

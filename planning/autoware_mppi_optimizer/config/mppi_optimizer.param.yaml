@@ -57,6 +57,7 @@
     ignore_drivable_area: true
     force_cold_start_each_step: false
     skip_if_invalid: true  # if the MPPI output is invalid (i.e., collides with obstacles or road borders), the input reference is returned
+    min_optimization_length: 0.0  # [m] skip MPPI optimization if the input reference trajectory is shorter than this length
     # Warm-start u_nom from shifted previous optimized controls (else reseed from DP each cycle).
     use_last_control_as_nominal: false
     # Cold-seed u_nom from acados temporal MPT (same N=80, dt=0.1 as MPPI). Falls back to

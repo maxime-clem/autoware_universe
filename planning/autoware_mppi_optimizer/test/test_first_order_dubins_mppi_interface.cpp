@@ -101,6 +101,10 @@ TEST(FirstOrderDubinsMppiInterface, SkippedInputsDoNotInitializeCuda)
   EXPECT_TRUE(empty_result.trajectory.points.empty());
   EXPECT_FALSE(interface.isInitialized());
 
+  FirstOrderDubinsMppiRuntimeOptions options;
+  options.min_optimization_length = 4.0F;
+  interface.setRuntimeOptions(options);
+
   auto short_stopping = makeStraightTrajectory(3U);
   short_stopping.points[1].longitudinal_velocity_mps = 0.0F;
   const auto stopping_result = optimize(interface, short_stopping);

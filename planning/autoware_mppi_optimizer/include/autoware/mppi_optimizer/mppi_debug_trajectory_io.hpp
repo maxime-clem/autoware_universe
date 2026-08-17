@@ -403,6 +403,10 @@ inline bool loadMppiDebugRuntimeOptionsCsv(
     }
     return it->second != 0.0F;
   };
+  const auto min_optimization_length_it = kv.find("min_optimization_length");
+  if (min_optimization_length_it != kv.end()) {
+    options.min_optimization_length = min_optimization_length_it->second;
+  }
   options.ignore_obstacles = as_bool("ignore_obstacles", options.ignore_obstacles);
   options.ignore_drivable_area = as_bool("ignore_drivable_area", options.ignore_drivable_area);
   options.force_cold_start_each_step =
