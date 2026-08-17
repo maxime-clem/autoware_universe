@@ -657,14 +657,6 @@ __host__ __device__ float FirstOrderDubinsBicycleCostImpl<
 }
 
 template <class CLASS_T, int NUM_TIMESTEPS, class PARAMS_T, class DYN_PARAMS_T>
-__host__ __device__ float
-FirstOrderDubinsBicycleCostImpl<CLASS_T, NUM_TIMESTEPS, PARAMS_T, DYN_PARAMS_T>::
-  computeLateralYawErrorValue(const float x, const float y, const float yaw, float * theta_c) const
-{
-  return computeLateralPathMetrics(x, y, yaw, theta_c).lateral_yaw_error_sq;
-}
-
-template <class CLASS_T, int NUM_TIMESTEPS, class PARAMS_T, class DYN_PARAMS_T>
 __host__ __device__ bool FirstOrderDubinsBicycleCostImpl<
   CLASS_T, NUM_TIMESTEPS, PARAMS_T,
   DYN_PARAMS_T>::exceedsLateralBoundary(const float x, const float y, float * theta_c) const
@@ -910,13 +902,13 @@ FirstOrderDubinsBicycleCostImpl<CLASS_T, NUM_TIMESTEPS, PARAMS_T, DYN_PARAMS_T>:
 {
   drivable_area_cost = computeSmoothBarrierCost(
     distanceToDrivableArea(x, y, yaw), this->params_.drivable_area_safe_margin,
-    this->params_.drivable_area_barrier_weight, this->params_.max_crash_penalty);
+    this->params_.drivable_area_barrier_weight);
   obstacle_cost = computeSmoothBarrierCost(
     distanceToClosestObstacle(x, y, yaw, timestep), this->params_.obstacle_safe_margin,
-    this->params_.obstacle_barrier_weight, this->params_.max_crash_penalty);
+    this->params_.obstacle_barrier_weight);
   road_border_cost = computeSmoothBarrierCost(
     distanceToRoadBorder(x, y, yaw), this->params_.road_border_safe_margin,
-    this->params_.road_border_barrier_weight, this->params_.max_crash_penalty);
+    this->params_.road_border_barrier_weight);
 }
 
 template <class CLASS_T, int NUM_TIMESTEPS, class PARAMS_T, class DYN_PARAMS_T>

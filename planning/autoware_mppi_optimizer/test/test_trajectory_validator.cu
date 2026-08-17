@@ -66,6 +66,13 @@ protected:
     params.ego_axle_to_box_center = 0.2F;
     params.obstacle_collision_margin = 0.0F;
     params.road_border_collision_margin = 0.0F;
+    params.lateral_boundary_barrier_weight =
+      params.max_crash_penalty /
+      (params.lateral_boundary_soft_margin * params.lateral_boundary_soft_margin);
+    params.obstacle_barrier_weight =
+      params.max_crash_penalty / (params.obstacle_safe_margin * params.obstacle_safe_margin);
+    params.road_border_barrier_weight =
+      params.max_crash_penalty / (params.road_border_safe_margin * params.road_border_safe_margin);
     return params;
   }
 
@@ -146,17 +153,16 @@ TEST_F(TrajectoryValidatorTest, ReportsRunningCostComponentsWithoutChangingTheir
 TEST_F(TrajectoryValidatorTest, SmoothBarrierCostRampsUpQuadratically)
 {
   constexpr float safe_margin = 1.0F;
-  constexpr float weight = 2000.0F;
-  constexpr float max_penalty = 100000.0F;
+  constexpr float precomputed_weight = 2000.0F;
 
-  EXPECT_FLOAT_EQ(computeSmoothBarrierCost(safe_margin, safe_margin, weight, max_penalty), 0.0F);
+  EXPECT_FLOAT_EQ(computeSmoothBarrierCost(safe_margin, safe_margin, precomputed_weight), 0.0F);
   EXPECT_FLOAT_EQ(
-    computeSmoothBarrierCost(safe_margin - 0.5F, safe_margin, weight, max_penalty), weight * 0.25F);
+    computeSmoothBarrierCost(safe_margin - 0.5F, safe_margin, precomputed_weight),
+    precomputed_weight * 0.25F);
 
   auto params = makeParams();
   params.obstacle_safe_margin = safe_margin;
-  params.obstacle_barrier_weight = weight;
-  params.max_crash_penalty = max_penalty;
+  params.obstacle_barrier_weight = precomputed_weight;
   cost_->setParams(params);
   setStraightReference();
   constexpr float obstacle_y = 0.0F;
@@ -178,22 +184,27 @@ TEST_F(TrajectoryValidatorTest, SmoothBarrierCostRampsUpQuadratically)
   cost_->setOrientedBoxObstacles(
     &obstacle_x, &obstacle_y, &obstacle_yaw, &obstacle_half_length, &obstacle_half_width, 1);
   EXPECT_NEAR(
-    cost_->computeRunningCostBreakdown(output, control, 0, &crash_status).obstacle, weight * 0.25F,
-    1.0E-3F);
+    cost_->computeRunningCostBreakdown(output, control, 0, &crash_status).obstacle,
+    precomputed_weight * 0.25F, 1.0E-3F);
 }
 
 TEST_F(TrajectoryValidatorTest, SmoothBarrierCostCapsAtFiniteMaximum)
 {
-  constexpr float max_penalty = 100000.0F;
-  const float cost = computeSmoothBarrierCost(-10.0F, 0.5F, 2000.0F, max_penalty);
+  constexpr float safe_margin = 0.5F;
+  constexpr float nominal_contact_penalty = 100000.0F;
+  constexpr float precomputed_weight = nominal_contact_penalty / (safe_margin * safe_margin);
+  const float contact_cost = computeSmoothBarrierCost(0.0F, safe_margin, precomputed_weight);
+  const float deep_penetration_cost =
+    computeSmoothBarrierCost(-10.0F, safe_margin, precomputed_weight);
 
-  EXPECT_FLOAT_EQ(cost, max_penalty);
-  EXPECT_TRUE(std::isfinite(cost));
+  EXPECT_FLOAT_EQ(contact_cost, nominal_contact_penalty);
+  EXPECT_GT(deep_penetration_cost, nominal_contact_penalty);
+  EXPECT_TRUE(std::isfinite(deep_penetration_cost));
 
   auto params = makeParams();
-  params.obstacle_safe_margin = 0.5F;
-  params.obstacle_barrier_weight = 2000.0F;
-  params.max_crash_penalty = max_penalty;
+  params.obstacle_safe_margin = safe_margin;
+  params.obstacle_barrier_weight = precomputed_weight;
+  params.max_crash_penalty = nominal_contact_penalty;
   cost_->setParams(params);
   setStraightReference();
   constexpr float obstacle_x = 0.2F;
@@ -210,7 +221,7 @@ TEST_F(TrajectoryValidatorTest, SmoothBarrierCostCapsAtFiniteMaximum)
   TestCost::control_array control = TestCost::control_array::Zero();
   int crash_status = 0;
   const auto breakdown = cost_->computeRunningCostBreakdown(output, control, 0, &crash_status);
-  EXPECT_FLOAT_EQ(breakdown.obstacle, max_penalty);
+  EXPECT_GT(breakdown.obstacle, nominal_contact_penalty);
   EXPECT_TRUE(std::isfinite(breakdown.total));
 }
 

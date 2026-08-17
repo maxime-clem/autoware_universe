@@ -155,6 +155,8 @@ void applyCostParam(
     params.corner_safe_margin = value;
   } else if (key == "boundary_threshold") {
     params.boundary_threshold = value;
+  } else if (key == "lateral_boundary_soft_margin") {
+    params.lateral_boundary_soft_margin = value;
   } else if (key == "accel_cmd_coeff") {
     params.accel_cmd_coeff = value;
   } else if (key == "steer_cmd_coeff") {
@@ -179,12 +181,8 @@ void applyCostParam(
     params.road_border_collision_margin = value;
   } else if (key == "obstacle_safe_margin") {
     params.obstacle_safe_margin = value;
-  } else if (key == "obstacle_barrier_weight") {
-    params.obstacle_barrier_weight = value;
   } else if (key == "road_border_safe_margin") {
     params.road_border_safe_margin = value;
-  } else if (key == "road_border_barrier_weight") {
-    params.road_border_barrier_weight = value;
   } else if (key == "drivable_area_safe_margin") {
     params.drivable_area_safe_margin = value;
   } else if (key == "drivable_area_barrier_weight") {

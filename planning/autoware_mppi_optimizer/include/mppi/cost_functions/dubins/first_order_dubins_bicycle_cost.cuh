@@ -12,13 +12,14 @@
 #include <mppi/dynamics/dubins/first_order_dubins_bicycle.cuh>
 
 __host__ __device__ inline float computeSmoothBarrierCost(
-  const float distance, const float safe_margin, const float weight, const float max_penalty)
+  const float distance, const float safe_margin, const float precomputed_weight)
 {
-  if (distance >= safe_margin) {
-    return 0.0F;
-  }
-  const float violation = safe_margin - distance;
-  return fminf(weight * violation * violation, max_penalty);
+  const float violation = fmaxf(0.0f, safe_margin - distance);
+
+  // Notice we removed the fminf() cap entirely.
+  // At distance 0.0, this exactly equals max_penalty.
+  // If distance < 0.0, it naturally grows > max_penalty, preserving the gradient!
+  return precomputed_weight * violation * violation;
 }
 
 template <int NUM_TIMESTEPS>
@@ -45,6 +46,9 @@ struct FirstOrderDubinsBicycleCostParams : public CostParams<2>
   /** Desired minimum distance [m] from each ego corner to drivable-area boundary segments. */
   float corner_safe_margin = 0.3F;
   float boundary_threshold = 0.8F;
+  /** Distance inside boundary_threshold at which the gradual lateral barrier activates. */
+  float lateral_boundary_soft_margin = 0.2F;
+  float lateral_boundary_barrier_weight;
   /** Beyond bound if signed lateral offset exceeds these (path-left = +); <0 falls back to
    * boundary_threshold. */
   float accel_cmd_coeff = 0.0F;
@@ -68,9 +72,9 @@ struct FirstOrderDubinsBicycleCostParams : public CostParams<2>
   /** Added to the ego footprint when testing collision with road-border segments. */
   float road_border_collision_margin = 0.2F;
   float obstacle_safe_margin = 0.5F;
-  float obstacle_barrier_weight = 2000.0F;
+  float obstacle_barrier_weight;
   float road_border_safe_margin = 0.3F;
-  float road_border_barrier_weight = 2000.0F;
+  float road_border_barrier_weight;
   float drivable_area_safe_margin = 0.0F;
   float drivable_area_barrier_weight = 2000.0F;
   float max_crash_penalty = 100000.0F;
@@ -184,13 +188,6 @@ public:
    */
   __host__ __device__ float computeLateralDistanceValue(
     float x, float y, float * theta_c = nullptr) const;
-
-  /**
-   * Squared yaw error vs the tangent of the closest corridor (or ref_) segment.
-   * Used by lateral_yaw_error_coeff.
-   */
-  __host__ __device__ float computeLateralYawErrorValue(
-    float x, float y, float yaw, float * theta_c = nullptr) const;
 
   /**
    * Unified closest-segment projection used when either lateral weight is active.
