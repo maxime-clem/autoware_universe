@@ -103,8 +103,8 @@ VEHICLE_PARAMS_DEFAULT_WHEEL_BASE = 4.76
 MPPI_DT = 0.1
 
 # Must match first_order_dubins_mppi_interface.cu (kNumRollouts / kMaxVizRollouts /
-# kMaxWorstVizRollouts).
-MPPI_NUM_ROLLOUTS = 32 * 1024
+# kMaxWorstVizRollouts). Cost CSV from retune is strided (kCostVizStride=8).
+MPPI_NUM_ROLLOUTS = 8 * 1024
 MPPI_MAX_VIZ_ROLLOUTS = 256
 MPPI_MAX_WORST_VIZ_ROLLOUTS = 128
 
@@ -120,6 +120,8 @@ DEFAULT_PARAMS: Dict[str, float] = {
     "heading_coeff": 600.0,
     "lateral_distance_coeff": 0.0,
     "lateral_yaw_error_coeff": 0.0,
+    "remaining_distance_coeff": 0.0,
+    "path_overshoot_coeff": 0.0,
     "track_center_coeff": 0.0,
     "corner_buffer_coeff": 0.0,
     "corner_safe_margin": 0.3,
@@ -152,6 +154,8 @@ SLIDER_SPECS: List[Tuple[str, float, float]] = [
     ("heading_coeff", 0.0, 5000.0),
     ("lateral_distance_coeff", 0.0, 10000.0),
     ("lateral_yaw_error_coeff", 0.0, 5000.0),
+    ("remaining_distance_coeff", 0.0, 10000.0),
+    ("path_overshoot_coeff", 0.0, 10000.0),
     ("track_center_coeff", 0.0, 10000.0),
     ("corner_buffer_coeff", 0.0, 10000.0),
     ("corner_safe_margin", 0.0, 2.0),
@@ -506,6 +510,37 @@ def load_costs_csv(path: Path) -> LoadedCostDistribution:
     return dist
 
 
+def effective_sample_size(
+    normalized_weights: List[float],
+    *,
+    total_rollouts: int = MPPI_NUM_ROLLOUTS,
+) -> float:
+    """Estimate N_eff = 1 / Σ w_i² for the full sample set.
+
+    Retune cost CSVs store true softmax weights for a strided subset (every 8th
+    rollout in mppi_offline_retune). Scale Σ w² by N / n so the estimate matches
+    the full population under exchangeable sample indices.
+    """
+    weights = [w for w in normalized_weights if w > 0.0]
+    n = len(weights)
+    if n == 0:
+        return 0.0
+    sum_sq = sum(w * w for w in weights)
+    if sum_sq <= 0.0:
+        return 0.0
+    if total_rollouts > n:
+        sum_sq *= float(total_rollouts) / float(n)
+    return 1.0 / sum_sq
+
+
+def format_effective_sample_size(normalized_weights: List[float]) -> str:
+    n_eff = effective_sample_size(normalized_weights)
+    if n_eff <= 0.0:
+        return "N_eff=0"
+    pct = 100.0 * n_eff / float(MPPI_NUM_ROLLOUTS)
+    return f"N_eff≈{n_eff:.1f} ({pct:.2f}% of {MPPI_NUM_ROLLOUTS})"
+
+
 def load_rollouts_csv(path: Path) -> List[Tuple[float, List[float], List[float], bool]]:
     """Load rollouts as (cost, xs, ys, is_worst) ordered by rollout_index."""
     if not path.is_file():
@@ -803,6 +838,7 @@ def frame_from_loaded(
             )
     if frame.normalized_weights:
         parts.append(f"w_max={max(frame.normalized_weights):.4f}")
+        parts.append(format_effective_sample_size(frame.normalized_weights))
     if frame.rollouts:
         parts.append(
             f"showing {sum(1 for *_r, w in frame.rollouts if not w)} top-weighted + "
@@ -1634,7 +1670,10 @@ def draw_frame(axes, frame: MppiDebugFrame) -> None:
 
     if ax_weight is not None:
         ax_weight.clear()
-        ax_weight.set_title("Retune weight distribution")
+        n_eff_title = ""
+        if frame.normalized_weights:
+            n_eff_title = "  |  " + format_effective_sample_size(frame.normalized_weights)
+        ax_weight.set_title("Retune weight distribution" + n_eff_title)
         ax_weight.set_xlabel("normalized weight")
         ax_weight.set_ylabel("count")
         ax_weight.grid(True, alpha=0.3)
@@ -1679,6 +1718,8 @@ def draw_frame(axes, frame: MppiDebugFrame) -> None:
             ("state/heading", "heading"),
             ("state/lateral_distance", "lat distance"),
             ("state/lateral_yaw_error", "lat yaw error"),
+            ("state/remaining_distance", "remaining dist"),
+            ("state/path_overshoot", "path overshoot"),
             ("state/track_center", "track center"),
             ("state/corner_buffer", "corner buffer"),
             ("state/drivable_area", "drivable area"),
@@ -2663,6 +2704,10 @@ class OfflineLogVisualizer:
                     f"[retune] frame {frame_id}: min rollout cost (sampled hist) = {global_min:.6g}"
                 )
                 self._status = f"{self._status} | min_cost={global_min:.1f}"
+            if costs.normalized_weights:
+                n_eff_txt = format_effective_sample_size(costs.normalized_weights)
+                print(f"[retune] frame {frame_id}: {n_eff_txt}")
+                self._status = f"{self._status} | {n_eff_txt}"
             if best_rollouts:
                 viz_min = min(r[0] for r in best_rollouts)
                 print(f"[retune] frame {frame_id}: min exported top-rollout cost = {viz_min:.6g}")

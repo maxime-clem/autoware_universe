@@ -47,6 +47,8 @@ struct ReferenceSample
   float y{0.0F};
   float yaw{0.0F};
   float velocity{0.0F};
+  /** Cumulative polyline chord length [m] along the DP trajectory at this sample's source index. */
+  float arc_length_s{0.0F};
 };
 
 struct OptimizedState
@@ -70,7 +72,8 @@ void setInitialEngageVelocity(Trajectory & trajectory);
 
 [[nodiscard]] std::vector<ReferenceSample> buildReferenceHorizon(
   const Trajectory & trajectory, const InitialState & ego, const int horizon = kMppiHorizon,
-  const float dt = kMppiDt, const size_t start_idx = 0U);
+  const float dt = kMppiDt, const size_t start_idx = 0U,
+  const std::vector<float> * cumulative_chord_length_s = nullptr);
 
 [[nodiscard]] std::vector<FirstOrderDubinsMppiControl> buildDiffusionNominalControl(
   const Trajectory & reference, std::size_t start_idx,
@@ -91,6 +94,12 @@ void setInitialEngageVelocity(Trajectory & trajectory);
 [[nodiscard]] float computeMengerCurvatureWithMinChord(
   const std::vector<autoware_planning_msgs::msg::TrajectoryPoint> & points, std::size_t target_idx,
   float min_chord_length_m = 1.5F) noexcept;
+
+/**
+ * @brief Cumulative chord length along a trajectory polyline: s[0]=0,
+ *        s[i]=s[i-1]+||p[i]-p[i-1]||. Same length as points; empty input → empty output.
+ */
+[[nodiscard]] std::vector<float> computeCumulativeChordLength(const Trajectory & trajectory);
 
 }  // namespace autoware::mppi_optimizer::detail
 

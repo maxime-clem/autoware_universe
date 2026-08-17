@@ -91,9 +91,22 @@ InitialState makeInitialState(
   return state;
 }
 
+std::vector<float> computeCumulativeChordLength(const Trajectory & trajectory)
+{
+  const auto & points = trajectory.points;
+  std::vector<float> arc_length_s(points.size(), 0.0F);
+  for (std::size_t i = 1; i < points.size(); ++i) {
+    const auto & prev = points[i - 1U].pose.position;
+    const auto & curr = points[i].pose.position;
+    const float segment = static_cast<float>(std::hypot(curr.x - prev.x, curr.y - prev.y));
+    arc_length_s[i] = arc_length_s[i - 1U] + segment;
+  }
+  return arc_length_s;
+}
+
 std::vector<ReferenceSample> buildReferenceHorizon(
   const Trajectory & trajectory, const InitialState & ego, const int horizon, const float dt,
-  const size_t start_idx)
+  const size_t start_idx, const std::vector<float> * cumulative_chord_length_s)
 {
   const size_t sample_count = std::max(0, horizon);
   std::vector<ReferenceSample> reference(static_cast<std::size_t>(sample_count));
@@ -104,22 +117,31 @@ std::vector<ReferenceSample> buildReferenceHorizon(
       reference_sample.y = ego.y;
       reference_sample.yaw = ego.yaw;
       reference_sample.velocity = ego.velocity;
+      reference_sample.arc_length_s = 0.0F;
     }
     return reference;
   }
+
+  std::vector<float> owned_chord_length;
+  const std::vector<float> * chord_length_ptr = cumulative_chord_length_s;
+  if (chord_length_ptr == nullptr) {
+    owned_chord_length = computeCumulativeChordLength(trajectory);
+    chord_length_ptr = &owned_chord_length;
+  }
+  const std::vector<float> & chord_length_s = *chord_length_ptr;
 
   for (std::size_t k = 0; k < sample_count; ++k) {
     auto & sample = reference[k];
     sample.time = static_cast<float>(k + 1U) * dt;
 
-    const std::size_t source_idx =
-      std::min(k + start_idx, trajectory.points.size() - 1U);
+    const std::size_t source_idx = std::min(k + start_idx, trajectory.points.size() - 1U);
     const auto & point = trajectory.points[source_idx];
 
     sample.x = static_cast<float>(point.pose.position.x);
     sample.y = static_cast<float>(point.pose.position.y);
     sample.yaw = static_cast<float>(tf2::getYaw(point.pose.orientation));
     sample.velocity = point.longitudinal_velocity_mps;
+    sample.arc_length_s = source_idx < chord_length_s.size() ? chord_length_s[source_idx] : 0.0F;
   }
   return reference;
 }

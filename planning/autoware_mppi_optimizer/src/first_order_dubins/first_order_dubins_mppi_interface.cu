@@ -57,7 +57,7 @@ namespace
 constexpr int kMppiHorizon = detail::kMppiHorizon;
 constexpr int kRefHorizon = kMppiHorizon;
 constexpr float kDt = detail::kMppiDt;
-constexpr size_t kMaxIter = 10;
+constexpr size_t kMaxIter = 5;
 constexpr int kNumRollouts = 8 * 1024;
 constexpr int kMaxVizRollouts = 256;
 constexpr int kMaxWorstVizRollouts = 128;
@@ -85,12 +85,14 @@ using SAMPLER = mppi::sampling_distributions::GaussianDistribution<DYN::DYN_PARA
 using Mppi = VanillaMPPIController<DYN, COST, FB, kMppiHorizon, kNumRollouts, SAMPLER>;
 using CostBreakdown = FirstOrderDubinsMppiCostBreakdown;
 
-constexpr std::array<float CostBreakdown::*, 18> kCostBreakdownFields = {
+constexpr std::array<float CostBreakdown::*, 20> kCostBreakdownFields = {
   &CostBreakdown::speed,
   &CostBreakdown::track,
   &CostBreakdown::heading,
   &CostBreakdown::lateral_distance,
   &CostBreakdown::lateral_yaw_error,
+  &CostBreakdown::remaining_distance,
+  &CostBreakdown::path_overshoot,
   &CostBreakdown::track_center,
   &CostBreakdown::corner_buffer,
   &CostBreakdown::drivable_area,
@@ -195,6 +197,8 @@ void applyUserCostParams(
   cost_params.heading_coeff = user.heading_coeff;
   cost_params.lateral_distance_coeff = user.lateral_distance_coeff;
   cost_params.lateral_yaw_error_coeff = user.lateral_yaw_error_coeff;
+  cost_params.remaining_distance_coeff = user.remaining_distance_coeff;
+  cost_params.path_overshoot_coeff = user.path_overshoot_coeff;
   cost_params.track_center_coeff = user.track_center_coeff;
   cost_params.corner_buffer_coeff = user.corner_buffer_coeff;
   cost_params.corner_safe_margin = user.corner_safe_margin;
@@ -541,6 +545,8 @@ void buildRolloutVisualization(
 struct FirstOrderDubinsMppiInterface::Impl
 {
   Trajectory diffusion_reference;
+  /** Cumulative chord length [m] along diffusion_reference.points (s[0]=0). */
+  std::vector<float> diffusion_reference_chord_length_s;
   TrackedObjects tracked_objects;
   std::vector<Segment> road_borders;
   std::vector<Segment> drivable_area;
@@ -1042,6 +1048,7 @@ struct FirstOrderDubinsMppiInterface::Impl
     }
 
     diffusion_reference = reference;
+    diffusion_reference_chord_length_s = detail::computeCumulativeChordLength(diffusion_reference);
     tracked_objects = ignore_obstacles ? TrackedObjects{} : tracked_objects_in;
     road_borders = road_borders_in;
     drivable_area = drivable_area_in;
@@ -1113,8 +1120,9 @@ struct FirstOrderDubinsMppiInterface::Impl
     ego.y = x(static_cast<int>(FirstOrderDubinsBicycleParams::StateIndex::POS_Y));
     ego.yaw = x(static_cast<int>(FirstOrderDubinsBicycleParams::StateIndex::YAW));
     ego.velocity = x(static_cast<int>(FirstOrderDubinsBicycleParams::StateIndex::VEL_X));
-    const auto prepared_reference =
-      detail::buildReferenceHorizon(diffusion_reference, ego, kRefHorizon, kDt, tracking_start_idx);
+    const auto prepared_reference = detail::buildReferenceHorizon(
+      diffusion_reference, ego, kRefHorizon, kDt, tracking_start_idx,
+      &diffusion_reference_chord_length_s);
     std::vector<mppi::path::PathReferenceSample> ref(prepared_reference.size());
     for (size_t i = 0; i < prepared_reference.size(); ++i) {
       ref[i].t = prepared_reference[i].time;
@@ -1122,11 +1130,11 @@ struct FirstOrderDubinsMppiInterface::Impl
       ref[i].y = prepared_reference[i].y;
       ref[i].yaw = prepared_reference[i].yaw;
       ref[i].v = prepared_reference[i].velocity;
-      ref[i].arc_length_s = 0.0F;
+      ref[i].arc_length_s = prepared_reference[i].arc_length_s;
     }
     mppi::cost::fillFirstOrderDubinsBicycleCostFromPathReference<kRefHorizon>(cost, ref);
 
-    // Lateral crash / soft lateral distance use the full DP polyline.
+    // Lateral crash / soft lateral distance use the full DP polyline + chord lengths.
     {
       const auto & pts = diffusion_reference.points;
       const int n_src = static_cast<int>(pts.size());
@@ -1135,6 +1143,7 @@ struct FirstOrderDubinsMppiInterface::Impl
         const int n = std::min(n_src, max_n);
         std::vector<float> corridor_x(static_cast<size_t>(n));
         std::vector<float> corridor_y(static_cast<size_t>(n));
+        std::vector<float> corridor_s(static_cast<size_t>(n));
         for (int i = 0; i < n; ++i) {
           const int src =
             (n_src <= max_n) ? i : ((i == n - 1) ? (n_src - 1) : (i * (n_src - 1) / (n - 1)));
@@ -1142,8 +1151,12 @@ struct FirstOrderDubinsMppiInterface::Impl
             static_cast<float>(pts[static_cast<size_t>(src)].pose.position.x);
           corridor_y[static_cast<size_t>(i)] =
             static_cast<float>(pts[static_cast<size_t>(src)].pose.position.y);
+          corridor_s[static_cast<size_t>(i)] =
+            (static_cast<size_t>(src) < diffusion_reference_chord_length_s.size())
+              ? diffusion_reference_chord_length_s[static_cast<size_t>(src)]
+              : 0.0F;
         }
-        cost.setLateralCorridor(corridor_x.data(), corridor_y.data(), n);
+        cost.setLateralCorridor(corridor_x.data(), corridor_y.data(), n, corridor_s.data());
       } else {
         cost.clearLateralCorridor();
       }

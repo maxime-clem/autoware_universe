@@ -30,6 +30,10 @@ struct FirstOrderDubinsMppiCostParams
   float heading_coeff{500.0F};
   float lateral_distance_coeff{0.0F};
   float lateral_yaw_error_coeff{0.0F};
+  /** Soft cost on remaining corridor chord length [m]; 0 disables. */
+  float remaining_distance_coeff{0.0F};
+  /** Soft cost on along-track overshoot past the corridor tip [m]; 0 disables. */
+  float path_overshoot_coeff{0.0F};
   float track_center_coeff{0.0F};
   float corner_buffer_coeff{0.0F};
   float corner_safe_margin{0.3F};

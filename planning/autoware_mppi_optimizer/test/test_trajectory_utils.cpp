@@ -146,7 +146,33 @@ TEST(ReferenceHorizon, EmptyInputHoldsTheMeasuredEgoState)
     EXPECT_FLOAT_EQ(sample.y, ego.y);
     EXPECT_FLOAT_EQ(sample.yaw, ego.yaw);
     EXPECT_FLOAT_EQ(sample.velocity, ego.velocity);
+    EXPECT_FLOAT_EQ(sample.arc_length_s, 0.0F);
   }
+}
+
+TEST(CumulativeChordLength, AccumulatesPolylineSegmentLengthsByIndex)
+{
+  Trajectory trajectory;
+  for (std::size_t i = 0; i < 4U; ++i) {
+    autoware_planning_msgs::msg::TrajectoryPoint point;
+    point.pose.position.x = static_cast<double>(i) * 3.0;
+    point.pose.position.y = 0.0;
+    trajectory.points.push_back(point);
+  }
+
+  const auto s = computeCumulativeChordLength(trajectory);
+  ASSERT_EQ(s.size(), 4U);
+  EXPECT_FLOAT_EQ(s[0], 0.0F);
+  EXPECT_FLOAT_EQ(s[1], 3.0F);
+  EXPECT_FLOAT_EQ(s[2], 6.0F);
+  EXPECT_FLOAT_EQ(s[3], 9.0F);
+
+  InitialState ego;
+  const auto reference = buildReferenceHorizon(trajectory, ego, 3, 0.1F, 1U, &s);
+  ASSERT_EQ(reference.size(), 3U);
+  EXPECT_FLOAT_EQ(reference[0].arc_length_s, 3.0F);
+  EXPECT_FLOAT_EQ(reference[1].arc_length_s, 6.0F);
+  EXPECT_FLOAT_EQ(reference[2].arc_length_s, 9.0F);
 }
 
 TEST(NominalControl, CopiesClampsPadsAndDerivesSteeringFromCurvature)

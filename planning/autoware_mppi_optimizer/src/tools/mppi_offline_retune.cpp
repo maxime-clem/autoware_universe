@@ -145,6 +145,10 @@ void applyCostParam(
     params.lateral_distance_coeff = value;
   } else if (key == "lateral_yaw_error_coeff") {
     params.lateral_yaw_error_coeff = value;
+  } else if (key == "remaining_distance_coeff") {
+    params.remaining_distance_coeff = value;
+  } else if (key == "path_overshoot_coeff") {
+    params.path_overshoot_coeff = value;
   } else if (key == "track_center_coeff") {
     params.track_center_coeff = value;
   } else if (key == "corner_buffer_coeff") {
@@ -746,6 +750,8 @@ int run(int argc, char ** argv)
       breakdown_out << "state/heading," << breakdown.heading << "\n";
       breakdown_out << "state/lateral_distance," << breakdown.lateral_distance << "\n";
       breakdown_out << "state/lateral_yaw_error," << breakdown.lateral_yaw_error << "\n";
+      breakdown_out << "state/remaining_distance," << breakdown.remaining_distance << "\n";
+      breakdown_out << "state/path_overshoot," << breakdown.path_overshoot << "\n";
       breakdown_out << "state/track_center," << breakdown.track_center << "\n";
       breakdown_out << "state/corner_buffer," << breakdown.corner_buffer << "\n";
       breakdown_out << "state/drivable_area," << breakdown.drivable_area << "\n";

@@ -41,6 +41,9 @@ void declare_first_order_dubins_mppi_cost_params(rclcpp::Node & node, const std:
     param_name(prefix, "lateral_distance_coeff"), defaults.lateral_distance_coeff);
   node.declare_parameter(
     param_name(prefix, "lateral_yaw_error_coeff"), defaults.lateral_yaw_error_coeff);
+  node.declare_parameter(
+    param_name(prefix, "remaining_distance_coeff"), defaults.remaining_distance_coeff);
+  node.declare_parameter(param_name(prefix, "path_overshoot_coeff"), defaults.path_overshoot_coeff);
   node.declare_parameter(param_name(prefix, "track_center_coeff"), defaults.track_center_coeff);
   node.declare_parameter(param_name(prefix, "corner_buffer_coeff"), defaults.corner_buffer_coeff);
   node.declare_parameter(param_name(prefix, "corner_safe_margin"), defaults.corner_safe_margin);
@@ -90,6 +93,10 @@ FirstOrderDubinsMppiCostParams get_first_order_dubins_mppi_cost_params(
     node.get_parameter(param_name(prefix, "lateral_distance_coeff")).as_double());
   params.lateral_yaw_error_coeff = static_cast<float>(
     node.get_parameter(param_name(prefix, "lateral_yaw_error_coeff")).as_double());
+  params.remaining_distance_coeff = static_cast<float>(
+    node.get_parameter(param_name(prefix, "remaining_distance_coeff")).as_double());
+  params.path_overshoot_coeff =
+    static_cast<float>(node.get_parameter(param_name(prefix, "path_overshoot_coeff")).as_double());
   params.track_center_coeff =
     static_cast<float>(node.get_parameter(param_name(prefix, "track_center_coeff")).as_double());
   params.corner_buffer_coeff =

@@ -6,12 +6,16 @@
     lambda: 100.0
     desired_speed: 2.5
     speed_coeff: 300.0
-    track_coeff: 500.0
+    track_coeff: 0.0
     track_terminal_scale: 10.0
-    heading_coeff: 600.0
+    heading_coeff: 0.0
     # Spatial (closest-segment) costs restored from pre time-indexed tracking; 0 = off.
-    lateral_distance_coeff: 1200.0
+    lateral_distance_coeff: 4000.0
     lateral_yaw_error_coeff: 500.0
+    # Soft cost on remaining corridor chord length to path end [m]; 0 = off.
+    remaining_distance_coeff: 150.0
+    # Soft cost on along-track distance past the corridor tip [m]; 0 = off.
+    path_overshoot_coeff: 0.0
     # Track the center of the ego footprint against the time-indexed reference; 0 = off.
     track_center_coeff: 0.0
     # Soft clearance cost for ego corners near drivable-area boundaries; 0 = off.
@@ -24,10 +28,10 @@
     longitudinal_jerk_coeff: 100.0
     accel_cmd_coeff: 50.0
     steer_cmd_coeff: 250.0
-    steer_rate_coeff: 100000.0
+    steer_rate_coeff: 20000.0
     # MPPI control-sample noise std-devs around the nominal (u_nom).
     accel_cmd_std_dev: 0.1
-    steer_cmd_std_dev: 0.002
+    steer_cmd_std_dev: 0.02
     obstacle_collision_margin: 0.2
     road_border_collision_margin: 0.3
     # Spatial window for Menger curvature when cold-starting nominal steering.
@@ -37,7 +41,7 @@
     # Optional offline debug logging for mppi_debug_visualizer.py --log-dir
     # Empty directory resolves to $XDG_CACHE_HOME/autoware/mppi_debug_log
     # (or $HOME/.cache/autoware/mppi_debug_log).
-    enable_debug_trajectory_log: false
+    enable_debug_trajectory_log: true
     debug_trajectory_log_directory: ""
 
     ignore_obstacles: false

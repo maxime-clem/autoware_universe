@@ -25,6 +25,10 @@ struct FirstOrderDubinsBicycleCostParams : public CostParams<2>
   float lateral_distance_coeff = 0.0F;
   /** Spatial yaw error vs closest-segment tangent: coeff * Δψ^2; 0 disables. */
   float lateral_yaw_error_coeff = 0.0F;
+  /** Progress along corridor: coeff * remaining chord length to path end [m]; 0 disables. */
+  float remaining_distance_coeff = 0.0F;
+  /** Along-track distance past the corridor tip [m]; 0 disables. */
+  float path_overshoot_coeff = 0.0F;
   /** Track the ego footprint center, rather than its rear-axle state, against ref[t]. */
   float track_center_coeff = 0.0F;
   /** Quadratic soft cost for ego corners closer than corner_safe_margin to a boundary. */
@@ -74,11 +78,41 @@ public:
   /** Full diffusion-path polyline for spatial lateral / crash. */
   static constexpr int kMaxLateralCorridorPoints = 256;
 
+  /**
+   * Block shared-memory layout in theta_c (floats):
+   *   GRD (all samples share):
+   *     [0] total corridor path length
+   *     [1] num corridor points (sign encodes has_s)
+   *     [2, 2+kMax) corridor_x, then corridor_y, corridor_s
+   *     then ref_x/y/v/yaw [NUM_TIMESTEPS each]
+   *   BLK (per sample, after float4-aligned GRD):
+   *     [0] warm-start segment index for polyline projection (-1 = full scan)
+   */
+  static constexpr int kSharedTotalOffset = 0;
+  static constexpr int kSharedNumCorridorOffset = 1;
+  static constexpr int kSharedCorridorXOffset = 2;
+  static constexpr int kSharedCorridorYOffset = kSharedCorridorXOffset + kMaxLateralCorridorPoints;
+  static constexpr int kSharedCorridorSOffset = kSharedCorridorYOffset + kMaxLateralCorridorPoints;
+  static constexpr int kSharedRefXOffset = kSharedCorridorSOffset + kMaxLateralCorridorPoints;
+  static constexpr int kSharedRefYOffset = kSharedRefXOffset + NUM_TIMESTEPS;
+  static constexpr int kSharedRefVOffset = kSharedRefYOffset + NUM_TIMESTEPS;
+  static constexpr int kSharedRefYawOffset = kSharedRefVOffset + NUM_TIMESTEPS;
+  static constexpr int kSharedNumFloats = kSharedRefYawOffset + NUM_TIMESTEPS;
+  /** Per-sample BLK: previous closest-segment index for warm-started projection. */
+  static constexpr int kSharedBlkHintFloats = 1;
+
   using PARENT_CLASS = Cost<CLASS_T, PARAMS_T, DYN_PARAMS_T>;
   using output_array = typename PARENT_CLASS::output_array;
   using control_array = typename PARENT_CLASS::control_array;
 
   FirstOrderDubinsBicycleCostImpl(cudaStream_t stream = 0);
+
+  /** Stage corridor + time-aligned ref into block shared memory (theta_c). */
+  __device__ void initializeCosts(
+    float * output, float * control, float * theta_c, float t_0, float dt);
+
+  /** Per-sample BLK slot: previous closest-segment index (-1 = full scan). */
+  __device__ float * projectionHintSlot(float * theta_c) const;
 
   void paramsToDevice();
 
@@ -87,10 +121,12 @@ public:
 
   /**
    * Spatial corridor for lateral_distance / lateral crash / lateral yaw error.
-   * Prefer the full diffusion path (including samples before delay start_idx).
-   * When unset (< 2 points), those checks fall back to the time-aligned ref_ polyline.
+   * Prefer the full diffusion path. When unset (< 2 points), those checks fall back
+   * to the time-aligned ref_ polyline.
+   * @param s optional cumulative chord length [m] per vertex (same length as x/y); nullptr
+   *          falls back to segment lengths from xy.
    */
-  void setLateralCorridor(const float * x, const float * y, int count);
+  void setLateralCorridor(const float * x, const float * y, int count, const float * s = nullptr);
 
   void clearLateralCorridor();
 
@@ -118,9 +154,11 @@ public:
   void clearDrivableArea();
 
   /** Euclidean position error to the time-aligned reference sample ref[t]. */
-  __host__ __device__ float computeTrackValue(float x, float y, int timestep) const;
+  __host__ __device__ float computeTrackValue(
+    float x, float y, int timestep, const float * theta_c = nullptr) const;
 
-  __host__ __device__ float computeHeadingValue(float yaw, int timestep) const;
+  __host__ __device__ float computeHeadingValue(
+    float yaw, int timestep, const float * theta_c = nullptr) const;
 
   /**
    * Cross-track distance to the lateral corridor (or ref_ polyline). Projections past the
@@ -128,23 +166,47 @@ public:
    * overshoot is not treated as lateral departure. Used by lateral_distance_coeff and
    * exceedsLateralBoundary.
    */
-  __host__ __device__ float computeLateralDistanceValue(float x, float y) const;
+  __host__ __device__ float computeLateralDistanceValue(
+    float x, float y, float * theta_c = nullptr) const;
 
   /**
    * Squared yaw error vs the tangent of the closest corridor (or ref_) segment.
    * Used by lateral_yaw_error_coeff.
    */
-  __host__ __device__ float computeLateralYawErrorValue(float x, float y, float yaw) const;
+  __host__ __device__ float computeLateralYawErrorValue(
+    float x, float y, float yaw, float * theta_c = nullptr) const;
+
+  /**
+   * Unified closest-segment projection used when either lateral weight is active.
+   * Also stores path length along the corridor chord-length array and remaining distance
+   * to the polyline end (used by remaining_distance_coeff).
+   * On device, warm-starts from / writes to the per-sample projection hint in theta_c BLK.
+   */
+  struct LateralPathMetrics
+  {
+    float lateral_distance = 0.0F;
+    float lateral_yaw_error_sq = 0.0F;
+    float path_length_s = 0.0F;
+    float remaining_distance_s = 0.0F;
+    /** Along-track extension past the corridor tip (0 if not past the end). */
+    float overshoot_distance_s = 0.0F;
+    /** Closest corridor/ref segment index (warm-start seed for the next query). */
+    int best_segment_i = 0;
+  };
+
+  __host__ __device__ LateralPathMetrics
+  computeLateralPathMetrics(float x, float y, float yaw, float * theta_c = nullptr) const;
 
   /** Distance from the ego footprint center to the time-aligned reference sample. */
   __host__ __device__ float computeTrackCenterValue(
-    float x, float y, float yaw, int timestep) const;
+    float x, float y, float yaw, int timestep, const float * theta_c = nullptr) const;
 
   /** Soft clearance cost for ego corners near drivable-area boundary segments. */
   __host__ __device__ float computeCornerBufferCost(float x, float y, float yaw) const;
 
   /** True if the lateral error exceeds boundary_threshold(_left/_right). */
-  __host__ __device__ bool exceedsLateralBoundary(const float x, const float y) const;
+  __host__ __device__ bool exceedsLateralBoundary(
+    const float x, const float y, float * theta_c = nullptr) const;
 
   __host__ __device__ bool egoIntersectsObstacleAtStep(
     const float x, const float y, const float yaw, int timestep) const;
@@ -160,7 +222,8 @@ public:
   __host__ __device__ bool isCrashLatched(const int * crash_status) const;
 
   __host__ __device__ bool detectAndLatchCrash(
-    const float x, const float y, const float yaw, int timestep, int * crash_status) const;
+    const float x, const float y, const float yaw, int timestep, int * crash_status,
+    float * theta_c = nullptr) const;
 
   __host__ __device__ float latchedCrashCost(const int * crash_status) const;
 
@@ -204,6 +267,11 @@ public:
   int num_lateral_corridor_points_ = 0;
   float lateral_corridor_x_[kMaxLateralCorridorPoints] = {};
   float lateral_corridor_y_[kMaxLateralCorridorPoints] = {};
+  /** Cumulative chord length [m] along lateral_corridor_* (s[0]=0); valid when count >= 1. */
+  float lateral_corridor_s_[kMaxLateralCorridorPoints] = {};
+  /** Final path length = s[n-1]; staged into shared memory with corridor/ref on GPU. */
+  float lateral_corridor_total_length_s_ = 0.0F;
+  bool lateral_corridor_has_s_ = false;
   int num_obstacles_ = 0;
   float obs_x_[kMaxObstacles][NUM_TIMESTEPS] = {};
   float obs_y_[kMaxObstacles][NUM_TIMESTEPS] = {};
