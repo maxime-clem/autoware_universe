@@ -27,8 +27,6 @@ struct FirstOrderDubinsBicycleCostParams : public CostParams<2>
 {
   float speed_coeff = 500.0F;
   float track_coeff = 1000.0F;
-  /** Multiplier on track_coeff * track_val in terminalCost (running state cost uses scale 1). */
-  float track_terminal_scale = 10.0F;
   /** Pull toward ref heading at each horizon step: coeff * (yaw - ref_yaw[t])^2; 0 disables. */
   float heading_coeff = 500.0F;
   /** Spatial (closest-segment) distance to the reference polyline; 0 disables. */
@@ -74,6 +72,11 @@ struct FirstOrderDubinsBicycleCostParams : public CostParams<2>
   float drivable_area_safe_margin = 0.0F;
   float drivable_area_barrier_weight = 2000.0F;
   float max_crash_penalty = 100000.0F;
+  float terminal_track_coeff = 10000.0F;
+  float terminal_heading_coeff = 5000.0F;
+  float terminal_lateral_distance_coeff = 0.0F;
+  float terminal_lateral_yaw_error_coeff = 0.0F;
+  float terminal_track_center_coeff = 0.0F;
 };
 
 template <

@@ -6,13 +6,19 @@
     lambda: 100.0
     speed_coeff: 10000.0
     track_coeff: 0.0
-    track_terminal_scale: 0.0
     heading_coeff: 0.0
     # Spatial (closest-segment) costs restored from pre time-indexed tracking; 0 = off.
     lateral_distance_coeff: 0.0
     lateral_yaw_error_coeff: 0.0
     # Track the center of the ego footprint against the time-indexed reference; 0 = off.
     track_center_coeff: 0.0
+    # Coefficients applied only to the final state of the MPPI horizon.
+    terminal_coeffs:
+      track: 0.0
+      heading: 0.0
+      lateral_distance: 0.0
+      lateral_yaw_error: 0.0
+      track_center: 0.0
     # Soft clearance cost for ego corners near drivable-area boundaries; 0 = off.
     corner_buffer_coeff: 0.0
     corner_safe_margin: 0.3

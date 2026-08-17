@@ -111,7 +111,6 @@ DEFAULT_PARAMS: Dict[str, float] = {
     "lambda": 100.0,
     "speed_coeff": 300.0,
     "track_coeff": 1200.0,
-    "track_terminal_scale": 10.0,
     "heading_coeff": 600.0,
     "lateral_distance_coeff": 0.0,
     "lateral_yaw_error_coeff": 0.0,
@@ -136,6 +135,11 @@ DEFAULT_PARAMS: Dict[str, float] = {
     "drivable_area_safe_margin": 0.0,
     "drivable_area_barrier_weight": 2000.0,
     "max_crash_penalty": 100000.0,
+    "terminal_coeffs.track": 0.0,
+    "terminal_coeffs.heading": 0.0,
+    "terminal_coeffs.lateral_distance": 0.0,
+    "terminal_coeffs.lateral_yaw_error": 0.0,
+    "terminal_coeffs.track_center": 0.0,
 }
 
 # (name, vmin, vmax) — keep in sync with DEFAULT_PARAMS keys.
@@ -143,7 +147,6 @@ DEFAULT_PARAMS: Dict[str, float] = {
 SLIDER_SPECS: List[Tuple[str, float, float]] = [
     ("lambda", 1.0, 20000.0),
     ("track_coeff", 0.0, 10000.0),
-    ("track_terminal_scale", 0.0, 50.0),
     ("speed_coeff", 0.0, 5000.0),
     ("heading_coeff", 0.0, 5000.0),
     ("lateral_distance_coeff", 0.0, 10000.0),
@@ -167,6 +170,11 @@ SLIDER_SPECS: List[Tuple[str, float, float]] = [
     ("drivable_area_safe_margin", 0.0, 5.0),
     ("drivable_area_barrier_weight", 0.0, 100000.0),
     ("max_crash_penalty", 1.0, 1000000.0),
+    ("terminal_coeffs.track", 0.0, 100000.0),
+    ("terminal_coeffs.heading", 0.0, 50000.0),
+    ("terminal_coeffs.lateral_distance", 0.0, 100000.0),
+    ("terminal_coeffs.lateral_yaw_error", 0.0, 50000.0),
+    ("terminal_coeffs.track_center", 0.0, 100000.0),
 ]
 
 
@@ -1707,13 +1715,28 @@ def load_params_yaml(path: Optional[Path]) -> Dict[str, float]:
     params = dict(DEFAULT_PARAMS)
     if path is None or not path.is_file():
         return params
-    for line in path.read_text().splitlines():
-        line = line.strip()
+    section_prefix = ""
+    section_indent = 0
+    for raw_line in path.read_text().splitlines():
+        indentation = len(raw_line) - len(raw_line.lstrip())
+        line = raw_line.strip()
         if not line or line.startswith("#") or ":" not in line:
             continue
         key, value = line.split(":", 1)
         key = key.strip()
         value = value.strip().strip('"')
+        if not value:
+            if key == "terminal_coeffs":
+                section_prefix = "terminal_coeffs."
+                section_indent = indentation
+            else:
+                section_prefix = ""
+            continue
+        if section_prefix:
+            if indentation > section_indent:
+                key = section_prefix + key
+            else:
+                section_prefix = ""
         if key in params:
             try:
                 params[key] = float(value)

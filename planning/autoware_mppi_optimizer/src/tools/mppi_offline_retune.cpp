@@ -135,8 +135,6 @@ void applyCostParam(
     params.speed_coeff = value;
   } else if (key == "track_coeff") {
     params.track_coeff = value;
-  } else if (key == "track_terminal_scale") {
-    params.track_terminal_scale = value;
   } else if (key == "heading_coeff") {
     params.heading_coeff = value;
   } else if (key == "lateral_distance_coeff") {
@@ -181,6 +179,16 @@ void applyCostParam(
     params.drivable_area_barrier_weight = value;
   } else if (key == "max_crash_penalty") {
     params.max_crash_penalty = value;
+  } else if (key == "terminal_coeffs.track") {
+    params.terminal_coeffs.track = value;
+  } else if (key == "terminal_coeffs.heading") {
+    params.terminal_coeffs.heading = value;
+  } else if (key == "terminal_coeffs.lateral_distance") {
+    params.terminal_coeffs.lateral_distance = value;
+  } else if (key == "terminal_coeffs.lateral_yaw_error") {
+    params.terminal_coeffs.lateral_yaw_error = value;
+  } else if (key == "terminal_coeffs.track_center") {
+    params.terminal_coeffs.track_center = value;
   } else {
     // Unknown keys must not abort retune: the visualizer may send a superset of
     // slider names / logged fields that older or newer builds don't share.
@@ -195,7 +203,11 @@ void loadParamsYaml(const std::string & path, FirstOrderDubinsMppiCostParams & p
     throw std::runtime_error("Failed to open params yaml: " + path);
   }
   std::string line;
+  std::string section_prefix;
+  std::size_t section_indent = 0U;
   while (std::getline(in, line)) {
+    const std::size_t first_non_space = line.find_first_not_of(" \t");
+    const std::size_t indentation = first_non_space == std::string::npos ? 0U : first_non_space;
     line = trim(line);
     if (line.empty() || line[0] == '#' || line.find(':') == std::string::npos) {
       continue;
@@ -203,6 +215,22 @@ void loadParamsYaml(const std::string & path, FirstOrderDubinsMppiCostParams & p
     const auto colon = line.find(':');
     std::string key = trim(line.substr(0, colon));
     std::string value = trim(line.substr(colon + 1));
+    if (value.empty()) {
+      if (key == "terminal_coeffs") {
+        section_prefix = "terminal_coeffs.";
+        section_indent = indentation;
+      } else {
+        section_prefix.clear();
+      }
+      continue;
+    }
+    if (!section_prefix.empty()) {
+      if (indentation > section_indent) {
+        key = section_prefix + key;
+      } else {
+        section_prefix.clear();
+      }
+    }
     if (!value.empty() && value.front() == '"' && value.back() == '"') {
       value = value.substr(1, value.size() - 2);
     }

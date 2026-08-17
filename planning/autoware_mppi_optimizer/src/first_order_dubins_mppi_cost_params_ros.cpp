@@ -34,7 +34,6 @@ void declare_first_order_dubins_mppi_cost_params(rclcpp::Node & node, const std:
   node.declare_parameter(param_name(prefix, "lambda"), defaults.lambda);
   node.declare_parameter(param_name(prefix, "speed_coeff"), defaults.speed_coeff);
   node.declare_parameter(param_name(prefix, "track_coeff"), defaults.track_coeff);
-  node.declare_parameter(param_name(prefix, "track_terminal_scale"), defaults.track_terminal_scale);
   node.declare_parameter(param_name(prefix, "heading_coeff"), defaults.heading_coeff);
   node.declare_parameter(
     param_name(prefix, "lateral_distance_coeff"), defaults.lateral_distance_coeff);
@@ -73,6 +72,18 @@ void declare_first_order_dubins_mppi_cost_params(rclcpp::Node & node, const std:
   node.declare_parameter(param_name(prefix, "goal_speed_coeff"), defaults.goal_speed_coeff);
   node.declare_parameter(param_name(prefix, "goal_yaw_coeff"), defaults.goal_yaw_coeff);
   node.declare_parameter(param_name(prefix, "goal_terminal_scale"), defaults.goal_terminal_scale);
+  node.declare_parameter(
+    param_name(prefix, "terminal_coeffs.track"), defaults.terminal_coeffs.track);
+  node.declare_parameter(
+    param_name(prefix, "terminal_coeffs.heading"), defaults.terminal_coeffs.heading);
+  node.declare_parameter(
+    param_name(prefix, "terminal_coeffs.lateral_distance"),
+    defaults.terminal_coeffs.lateral_distance);
+  node.declare_parameter(
+    param_name(prefix, "terminal_coeffs.lateral_yaw_error"),
+    defaults.terminal_coeffs.lateral_yaw_error);
+  node.declare_parameter(
+    param_name(prefix, "terminal_coeffs.track_center"), defaults.terminal_coeffs.track_center);
 }
 
 FirstOrderDubinsMppiCostParams get_first_order_dubins_mppi_cost_params(
@@ -84,8 +95,6 @@ FirstOrderDubinsMppiCostParams get_first_order_dubins_mppi_cost_params(
     static_cast<float>(node.get_parameter(param_name(prefix, "speed_coeff")).as_double());
   params.track_coeff =
     static_cast<float>(node.get_parameter(param_name(prefix, "track_coeff")).as_double());
-  params.track_terminal_scale =
-    static_cast<float>(node.get_parameter(param_name(prefix, "track_terminal_scale")).as_double());
   params.heading_coeff =
     static_cast<float>(node.get_parameter(param_name(prefix, "heading_coeff")).as_double());
   params.lateral_distance_coeff = static_cast<float>(
@@ -138,6 +147,16 @@ FirstOrderDubinsMppiCostParams get_first_order_dubins_mppi_cost_params(
     static_cast<float>(node.get_parameter(param_name(prefix, "goal_yaw_coeff")).as_double());
   params.goal_terminal_scale =
     static_cast<float>(node.get_parameter(param_name(prefix, "goal_terminal_scale")).as_double());
+  params.terminal_coeffs.track =
+    static_cast<float>(node.get_parameter(param_name(prefix, "terminal_coeffs.track")).as_double());
+  params.terminal_coeffs.heading = static_cast<float>(
+    node.get_parameter(param_name(prefix, "terminal_coeffs.heading")).as_double());
+  params.terminal_coeffs.lateral_distance = static_cast<float>(
+    node.get_parameter(param_name(prefix, "terminal_coeffs.lateral_distance")).as_double());
+  params.terminal_coeffs.lateral_yaw_error = static_cast<float>(
+    node.get_parameter(param_name(prefix, "terminal_coeffs.lateral_yaw_error")).as_double());
+  params.terminal_coeffs.track_center = static_cast<float>(
+    node.get_parameter(param_name(prefix, "terminal_coeffs.track_center")).as_double());
   return params;
 }
 

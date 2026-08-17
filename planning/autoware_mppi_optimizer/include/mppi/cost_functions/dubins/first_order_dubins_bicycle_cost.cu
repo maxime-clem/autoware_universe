@@ -847,17 +847,15 @@ autoware::mppi_optimizer::FirstOrderDubinsMppiCostBreakdown FirstOrderDubinsBicy
   const float y_pos = y[static_cast<int>(O::BASELINK_POS_I_Y)];
   const float yaw = y[static_cast<int>(O::YAW)];
 
-  result.track = this->params_.track_coeff * computeTrackValue(x_pos, y_pos, timestep) *
-                 this->params_.track_terminal_scale;
-  result.heading = this->params_.heading_coeff * computeHeadingValue(yaw, timestep) * 10.0F;
+  result.track = this->params_.terminal_track_coeff * computeTrackValue(x_pos, y_pos, timestep);
+  result.heading = this->params_.terminal_heading_coeff * computeHeadingValue(yaw, timestep);
   const float lateral_deviation = computeLateralDistanceValue(x_pos, y_pos);
-  result.lateral_distance = this->params_.lateral_distance_coeff * lateral_deviation * 10.0F;
+  result.lateral_distance = this->params_.terminal_lateral_distance_coeff * lateral_deviation;
   result.lateral_boundary = computeLateralBoundaryCost(lateral_deviation);
   result.lateral_yaw_error =
-    this->params_.lateral_yaw_error_coeff * computeLateralYawErrorValue(x_pos, y_pos, yaw) * 10.0F;
-  result.track_center = this->params_.track_center_coeff *
-                        computeTrackCenterValue(x_pos, y_pos, yaw, timestep) *
-                        this->params_.track_terminal_scale;
+    this->params_.terminal_lateral_yaw_error_coeff * computeLateralYawErrorValue(x_pos, y_pos, yaw);
+  result.track_center = this->params_.terminal_track_center_coeff *
+                        computeTrackCenterValue(x_pos, y_pos, yaw, timestep);
   result.corner_buffer = computeCornerBufferCost(x_pos, y_pos, yaw);
   computeGradualCrashCosts(
     x_pos, y_pos, yaw, timestep, result.drivable_area, result.obstacle, result.road_border);
@@ -978,19 +976,17 @@ FirstOrderDubinsBicycleCostImpl<CLASS_T, NUM_TIMESTEPS, PARAMS_T, DYN_PARAMS_T>:
   const float y_pos = y[static_cast<int>(O::BASELINK_POS_I_Y)];
   const float yaw = y[static_cast<int>(O::YAW)];
   const float track_val = computeTrackValue(x_pos, y_pos, NUM_TIMESTEPS - 1);
-  const float track_cost =
-    this->params_.track_coeff * track_val * this->params_.track_terminal_scale;
+  const float track_cost = this->params_.terminal_track_coeff * track_val;
   const float heading_cost =
-    this->params_.heading_coeff * computeHeadingValue(yaw, NUM_TIMESTEPS - 1) * 10.0F;
+    this->params_.terminal_heading_coeff * computeHeadingValue(yaw, NUM_TIMESTEPS - 1);
   const float lateral_deviation = computeLateralDistanceValue(x_pos, y_pos);
   const float lateral_distance_cost =
-    this->params_.lateral_distance_coeff * lateral_deviation * 10.0F;
+    this->params_.terminal_lateral_distance_coeff * lateral_deviation;
   const float lateral_boundary_cost = computeLateralBoundaryCost(lateral_deviation);
   const float lateral_yaw_error_cost =
-    this->params_.lateral_yaw_error_coeff * computeLateralYawErrorValue(x_pos, y_pos, yaw) * 10.0F;
-  const float track_center_cost = this->params_.track_center_coeff *
-                                  computeTrackCenterValue(x_pos, y_pos, yaw, NUM_TIMESTEPS - 1) *
-                                  this->params_.track_terminal_scale;
+    this->params_.terminal_lateral_yaw_error_coeff * computeLateralYawErrorValue(x_pos, y_pos, yaw);
+  const float track_center_cost = this->params_.terminal_track_center_coeff *
+                                  computeTrackCenterValue(x_pos, y_pos, yaw, NUM_TIMESTEPS - 1);
   const float corner_buffer_cost = computeCornerBufferCost(x_pos, y_pos, yaw);
   float drivable_area_cost = 0.0F;
   float obstacle_cost = 0.0F;

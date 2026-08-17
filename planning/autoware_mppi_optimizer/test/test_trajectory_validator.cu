@@ -110,7 +110,6 @@ TEST_F(TrajectoryValidatorTest, ReportsRunningCostComponentsWithoutChangingTheir
   auto params = makeParams();
   params.speed_coeff = 0.0F;
   params.track_coeff = 2.0F;
-  params.track_terminal_scale = 0.0F;
   params.heading_coeff = 0.0F;
   params.lateral_distance_coeff = 0.0F;
   params.lateral_yaw_error_coeff = 0.0F;
@@ -148,6 +147,45 @@ TEST_F(TrajectoryValidatorTest, ReportsRunningCostComponentsWithoutChangingTheir
   EXPECT_NEAR(breakdown.total, direct_total, 1.0E-5F);
   EXPECT_EQ(crash_status, 0);
   EXPECT_EQ(direct_crash_status, 0);
+}
+
+TEST_F(TrajectoryValidatorTest, UsesIndependentTerminalCoefficients)
+{
+  auto params = makeParams();
+  params.track_coeff = 100.0F;
+  params.heading_coeff = 100.0F;
+  params.lateral_distance_coeff = 100.0F;
+  params.lateral_yaw_error_coeff = 100.0F;
+  params.track_center_coeff = 100.0F;
+  params.corner_buffer_coeff = 0.0F;
+  params.drivable_area_barrier_weight = 0.0F;
+  params.terminal_track_coeff = 2.0F;
+  params.terminal_heading_coeff = 3.0F;
+  params.terminal_lateral_distance_coeff = 5.0F;
+  params.terminal_lateral_yaw_error_coeff = 7.0F;
+  params.terminal_track_center_coeff = 11.0F;
+  cost_->setParams(params);
+  setStraightReference();
+
+  TestCost::output_array output = TestCost::output_array::Zero();
+  output(static_cast<int>(OutputIndex::BASELINK_POS_I_X)) =
+    0.20F * static_cast<float>(kTestHorizon - 1) + 3.0F;
+  output(static_cast<int>(OutputIndex::BASELINK_POS_I_Y)) = 4.0F;
+  output(static_cast<int>(OutputIndex::YAW)) = 0.5F;
+
+  const auto breakdown = cost_->computeTerminalCostBreakdown(output);
+  EXPECT_NEAR(breakdown.track, 2.0F * 5.0F, 1.0E-4F);
+  EXPECT_NEAR(breakdown.heading, 3.0F * 0.25F, 1.0E-4F);
+  EXPECT_NEAR(breakdown.lateral_distance, 5.0F * 4.0F, 1.0E-4F);
+  EXPECT_NEAR(breakdown.lateral_yaw_error, 7.0F * 0.25F, 1.0E-4F);
+  EXPECT_NEAR(
+    breakdown.track_center,
+    11.0F * cost_->computeTrackCenterValue(
+              output(static_cast<int>(OutputIndex::BASELINK_POS_I_X)),
+              output(static_cast<int>(OutputIndex::BASELINK_POS_I_Y)),
+              output(static_cast<int>(OutputIndex::YAW)), kTestHorizon - 1),
+    1.0E-4F);
+  EXPECT_NEAR(breakdown.componentTotal(), breakdown.total, 1.0E-4F);
 }
 
 TEST_F(TrajectoryValidatorTest, SmoothBarrierCostRampsUpQuadratically)

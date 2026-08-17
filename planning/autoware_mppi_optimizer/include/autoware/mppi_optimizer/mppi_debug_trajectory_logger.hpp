@@ -146,7 +146,6 @@ public:
         out << "lambda," << cost.lambda << "\n";
         out << "speed_coeff," << cost.speed_coeff << "\n";
         out << "track_coeff," << cost.track_coeff << "\n";
-        out << "track_terminal_scale," << cost.track_terminal_scale << "\n";
         out << "heading_coeff," << cost.heading_coeff << "\n";
         out << "lateral_distance_coeff," << cost.lateral_distance_coeff << "\n";
         out << "lateral_yaw_error_coeff," << cost.lateral_yaw_error_coeff << "\n";
@@ -172,6 +171,12 @@ public:
         out << "drivable_area_safe_margin," << cost.drivable_area_safe_margin << "\n";
         out << "drivable_area_barrier_weight," << cost.drivable_area_barrier_weight << "\n";
         out << "max_crash_penalty," << cost.max_crash_penalty << "\n";
+        out << "terminal_coeffs.track," << cost.terminal_coeffs.track << "\n";
+        out << "terminal_coeffs.heading," << cost.terminal_coeffs.heading << "\n";
+        out << "terminal_coeffs.lateral_distance," << cost.terminal_coeffs.lateral_distance << "\n";
+        out << "terminal_coeffs.lateral_yaw_error," << cost.terminal_coeffs.lateral_yaw_error
+            << "\n";
+        out << "terminal_coeffs.track_center," << cost.terminal_coeffs.track_center << "\n";
       }
     }
     {

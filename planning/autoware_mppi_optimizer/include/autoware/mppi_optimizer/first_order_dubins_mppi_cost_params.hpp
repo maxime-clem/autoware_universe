@@ -18,6 +18,15 @@
 namespace autoware::mppi_optimizer
 {
 
+struct FirstOrderDubinsMppiTerminalCostParams
+{
+  float track{10000.0F};
+  float heading{5000.0F};
+  float lateral_distance{0.0F};
+  float lateral_yaw_error{0.0F};
+  float track_center{0.0F};
+};
+
 /** Host-side MPPI tunables; defaults match mppi_optimizer.param.yaml. */
 struct FirstOrderDubinsMppiCostParams
 {
@@ -25,7 +34,6 @@ struct FirstOrderDubinsMppiCostParams
   float lambda{1500.0F};
   float speed_coeff{500.0F};
   float track_coeff{1000.0F};
-  float track_terminal_scale{10.0F};
   float heading_coeff{500.0F};
   float lateral_distance_coeff{0.0F};
   float lateral_yaw_error_coeff{0.0F};
@@ -57,6 +65,7 @@ struct FirstOrderDubinsMppiCostParams
   float goal_speed_coeff{0.0F};
   float goal_yaw_coeff{500.0F};
   float goal_terminal_scale{10.0F};
+  FirstOrderDubinsMppiTerminalCostParams terminal_coeffs{};
 };
 
 }  // namespace autoware::mppi_optimizer

@@ -191,7 +191,6 @@ void applyUserCostParams(
 {
   cost_params.speed_coeff = user.speed_coeff;
   cost_params.track_coeff = user.track_coeff;
-  cost_params.track_terminal_scale = user.track_terminal_scale;
   cost_params.heading_coeff = user.heading_coeff;
   cost_params.lateral_distance_coeff = user.lateral_distance_coeff;
   cost_params.lateral_yaw_error_coeff = user.lateral_yaw_error_coeff;
@@ -220,6 +219,11 @@ void applyUserCostParams(
   cost_params.drivable_area_safe_margin = user.drivable_area_safe_margin;
   cost_params.drivable_area_barrier_weight = user.drivable_area_barrier_weight;
   cost_params.max_crash_penalty = user.max_crash_penalty;
+  cost_params.terminal_track_coeff = user.terminal_coeffs.track;
+  cost_params.terminal_heading_coeff = user.terminal_coeffs.heading;
+  cost_params.terminal_lateral_distance_coeff = user.terminal_coeffs.lateral_distance;
+  cost_params.terminal_lateral_yaw_error_coeff = user.terminal_coeffs.lateral_yaw_error;
+  cost_params.terminal_track_center_coeff = user.terminal_coeffs.track_center;
 }
 
 FirstOrderDubinsMppiState toHostState(const DYN::state_array & x)
