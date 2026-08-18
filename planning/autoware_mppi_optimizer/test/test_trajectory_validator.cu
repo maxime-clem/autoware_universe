@@ -67,12 +67,13 @@ protected:
     params.obstacle_collision_margin = 0.0F;
     params.road_border_collision_margin = 0.0F;
     params.lateral_boundary_barrier_weight =
-      params.max_crash_penalty /
+      params.crash_contact_penalty /
       (params.lateral_boundary_soft_margin * params.lateral_boundary_soft_margin);
     params.obstacle_barrier_weight =
-      params.max_crash_penalty / (params.obstacle_safe_margin * params.obstacle_safe_margin);
+      params.crash_contact_penalty / (params.obstacle_safe_margin * params.obstacle_safe_margin);
     params.road_border_barrier_weight =
-      params.max_crash_penalty / (params.road_border_safe_margin * params.road_border_safe_margin);
+      params.crash_contact_penalty /
+      (params.road_border_safe_margin * params.road_border_safe_margin);
     return params;
   }
 
@@ -211,9 +212,9 @@ TEST_F(TrajectoryValidatorTest, LateralBoundaryBarrierActivatesInsideThreshold)
   params.road_border_barrier_weight = 0.0F;
   params.boundary_threshold = 0.8F;
   params.lateral_boundary_soft_margin = 0.2F;
-  params.max_crash_penalty = 100000.0F;
+  params.crash_contact_penalty = 100000.0F;
   params.lateral_boundary_barrier_weight =
-    params.max_crash_penalty /
+    params.crash_contact_penalty /
     (params.lateral_boundary_soft_margin * params.lateral_boundary_soft_margin);
   cost_->setParams(params);
   setStraightReference();
@@ -234,7 +235,7 @@ TEST_F(TrajectoryValidatorTest, LateralBoundaryBarrierActivatesInsideThreshold)
   output(static_cast<int>(OutputIndex::BASELINK_POS_I_Y)) = 0.8F;
   EXPECT_NEAR(
     cost_->computeRunningCostBreakdown(output, control, 0, &crash_status).lateral_boundary,
-    params.max_crash_penalty, 1.0F);
+    params.crash_contact_penalty, 1.0F);
 }
 
 TEST_F(TrajectoryValidatorTest, SmoothBarrierCostGrowsBeyondContactPenaltyForPenetration)
@@ -253,7 +254,7 @@ TEST_F(TrajectoryValidatorTest, SmoothBarrierCostGrowsBeyondContactPenaltyForPen
   auto params = makeParams();
   params.obstacle_safe_margin = safe_margin;
   params.obstacle_barrier_weight = precomputed_weight;
-  params.max_crash_penalty = nominal_contact_penalty;
+  params.crash_contact_penalty = nominal_contact_penalty;
   cost_->setParams(params);
   setStraightReference();
   constexpr float obstacle_x = 0.2F;
@@ -324,7 +325,7 @@ TEST_F(TrajectoryValidatorTest, GradualConstraintCostsAreIncludedInBreakdownTota
   params.road_border_barrier_weight = 2000.0F;
   params.drivable_area_safe_margin = 0.0F;
   params.drivable_area_barrier_weight = 2000.0F;
-  params.max_crash_penalty = 100000.0F;
+  params.crash_contact_penalty = 100000.0F;
   cost_->setParams(params);
   setStraightReference();
 

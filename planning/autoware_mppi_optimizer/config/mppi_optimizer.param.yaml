@@ -35,10 +35,10 @@
     boundary_threshold: 0.8
     lateral_boundary_soft_margin: 0.2
     obstacle_collision_margin: 0.2
-    road_border_collision_margin: 0.3
-    obstacle_safe_margin: 0.5
-    road_border_safe_margin: 0.3
-    max_crash_penalty: 100000.0
+    road_border_collision_margin: 0.2
+    obstacle_safe_margin: 0.4
+    road_border_safe_margin: 0.4
+    crash_contact_penalty: 100000.0  # cost applied when the distance from a road_border/obstacle/lateral bound is exactly 0 (including hard margin)
 
     nominal_curvature_min_chord_length_m: 1.5
 

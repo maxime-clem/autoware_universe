@@ -15,8 +15,6 @@ __host__ __device__ inline float computeSmoothBarrierCost(
   const float distance, const float safe_margin, const float precomputed_weight)
 {
   const float violation = fmaxf(0.0f, safe_margin - distance);
-
-  // Notice we removed the fminf() cap entirely.
   // At distance 0.0, this exactly equals max_penalty.
   // If distance < 0.0, it naturally grows > max_penalty, preserving the gradient!
   return precomputed_weight * violation * violation;
@@ -77,7 +75,7 @@ struct FirstOrderDubinsBicycleCostParams : public CostParams<2>
   float road_border_barrier_weight;
   float drivable_area_safe_margin = 0.0F;
   float drivable_area_barrier_weight = 2000.0F;
-  float max_crash_penalty = 100000.0F;
+  float crash_contact_penalty = 100000.0F;
 };
 
 template <

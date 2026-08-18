@@ -143,7 +143,7 @@ DEFAULT_PARAMS: Dict[str, float] = {
     "road_border_safe_margin": 0.3,
     "drivable_area_safe_margin": 0.0,
     "drivable_area_barrier_weight": 2000.0,
-    "max_crash_penalty": 100000.0,
+    "crash_contact_penalty": 100000.0,
 }
 
 # (name, vmin, vmax) — keep in sync with DEFAULT_PARAMS keys.
@@ -178,7 +178,7 @@ SLIDER_SPECS: List[Tuple[str, float, float]] = [
     ("road_border_safe_margin", 0.0, 5.0),
     ("drivable_area_safe_margin", 0.0, 5.0),
     ("drivable_area_barrier_weight", 0.0, 100000.0),
-    ("max_crash_penalty", 1.0, 1000000.0),
+    ("crash_contact_penalty", 1.0, 1000000.0),
 ]
 
 

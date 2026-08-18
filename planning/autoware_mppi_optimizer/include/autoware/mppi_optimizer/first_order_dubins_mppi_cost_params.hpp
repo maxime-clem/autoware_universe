@@ -60,7 +60,7 @@ struct FirstOrderDubinsMppiCostParams
   float road_border_barrier_weight{};
   float drivable_area_safe_margin{0.0F};
   float drivable_area_barrier_weight{2000.0F};
-  float max_crash_penalty{100000.0F};
+  float crash_contact_penalty{100000.0F};
 };
 
 }  // namespace autoware::mppi_optimizer

@@ -173,7 +173,7 @@ public:
         out << "road_border_safe_margin," << cost.road_border_safe_margin << "\n";
         out << "drivable_area_safe_margin," << cost.drivable_area_safe_margin << "\n";
         out << "drivable_area_barrier_weight," << cost.drivable_area_barrier_weight << "\n";
-        out << "max_crash_penalty," << cost.max_crash_penalty << "\n";
+        out << "crash_contact_penalty," << cost.crash_contact_penalty << "\n";
       }
     }
     {

@@ -187,8 +187,8 @@ void applyCostParam(
     params.drivable_area_safe_margin = value;
   } else if (key == "drivable_area_barrier_weight") {
     params.drivable_area_barrier_weight = value;
-  } else if (key == "max_crash_penalty") {
-    params.max_crash_penalty = value;
+  } else if (key == "crash_contact_penalty") {
+    params.crash_contact_penalty = value;
   } else {
     // Unknown keys must not abort retune: the visualizer may send a superset of
     // slider names / logged fields that older or newer builds don't share.

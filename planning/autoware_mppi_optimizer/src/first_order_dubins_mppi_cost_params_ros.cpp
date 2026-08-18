@@ -73,7 +73,8 @@ void declare_first_order_dubins_mppi_cost_params(rclcpp::Node & node, const std:
     param_name(prefix, "drivable_area_safe_margin"), defaults.drivable_area_safe_margin);
   node.declare_parameter(
     param_name(prefix, "drivable_area_barrier_weight"), defaults.drivable_area_barrier_weight);
-  node.declare_parameter(param_name(prefix, "max_crash_penalty"), defaults.max_crash_penalty);
+  node.declare_parameter(
+    param_name(prefix, "crash_contact_penalty"), defaults.crash_contact_penalty);
 }
 
 FirstOrderDubinsMppiCostParams get_first_order_dubins_mppi_cost_params(
@@ -137,8 +138,8 @@ FirstOrderDubinsMppiCostParams get_first_order_dubins_mppi_cost_params(
     node.get_parameter(param_name(prefix, "drivable_area_safe_margin")).as_double());
   params.drivable_area_barrier_weight = static_cast<float>(
     node.get_parameter(param_name(prefix, "drivable_area_barrier_weight")).as_double());
-  params.max_crash_penalty =
-    static_cast<float>(node.get_parameter(param_name(prefix, "max_crash_penalty")).as_double());
+  params.crash_contact_penalty =
+    static_cast<float>(node.get_parameter(param_name(prefix, "crash_contact_penalty")).as_double());
   return params;
 }
 

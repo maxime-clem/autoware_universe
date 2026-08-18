@@ -918,10 +918,12 @@ FirstOrderDubinsBicycleCostImpl<CLASS_T, NUM_TIMESTEPS, PARAMS_T, DYN_PARAMS_T>:
           distanceToDrivableArea(x, y, yaw), this->params_.drivable_area_safe_margin,
           this->params_.drivable_area_barrier_weight);
   obstacle_cost = computeSmoothBarrierCost(
-    distanceToClosestObstacle(x, y, yaw, timestep), this->params_.obstacle_safe_margin,
+    distanceToClosestObstacle(x, y, yaw, timestep),
+    this->params_.obstacle_collision_margin + this->params_.obstacle_safe_margin,
     this->params_.obstacle_barrier_weight);
   road_border_cost = computeSmoothBarrierCost(
-    distanceToRoadBorder(x, y, yaw), this->params_.road_border_safe_margin,
+    distanceToRoadBorder(x, y, yaw),
+    this->params_.road_border_collision_margin + this->params_.road_border_safe_margin,
     this->params_.road_border_barrier_weight);
 }
 
