@@ -134,6 +134,7 @@ DEFAULT_PARAMS: Dict[str, float] = {
     "accel_cmd_coeff": 50.0,
     "steer_cmd_coeff": 250.0,
     "steer_rate_coeff": 100000.0,
+    "overlimit_coeff": 10000.0,
     "accel_cmd_std_dev": 0.35,
     "steer_cmd_std_dev": 0.024,
     "nominal_curvature_min_chord_length_m": 1.5,
@@ -167,6 +168,7 @@ SLIDER_SPECS: List[Tuple[str, float, float]] = [
     ("accel_cmd_coeff", 0.0, 2000.0),
     ("steer_cmd_coeff", 0.0, 5000.0),
     ("steer_rate_coeff", 0.0, 500000.0),
+    ("overlimit_coeff", 0.0, 100000.0),
     ("accel_cmd_std_dev", 0.0, 2.0),
     ("steer_cmd_std_dev", 0.0, 0.2),
     ("nominal_curvature_min_chord_length_m", 0.0, 5.0),
@@ -1738,6 +1740,9 @@ def draw_frame(axes, frame: MppiDebugFrame) -> None:
             ("comfort/lateral_jerk", "lat jerk"),
             ("comfort/longitudinal_jerk", "long jerk"),
             ("comfort/steering_rate", "steer rate"),
+            ("kinematic/velocity_overlimit", "velocity limit"),
+            ("kinematic/acceleration_overlimit", "accel limit"),
+            ("kinematic/jerk_overlimit", "jerk limit"),
         )
         components = [
             (key, label, frame.cost_breakdown.get(key, 0.0))

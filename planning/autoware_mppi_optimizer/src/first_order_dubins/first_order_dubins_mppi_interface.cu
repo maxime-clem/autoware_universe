@@ -70,6 +70,53 @@ rclcpp::Logger mppiLogger()
   return rclcpp::get_logger(kLoggerName);
 }
 
+bool isValidSignedInterval(const std::optional<float> & lower, const std::optional<float> & upper)
+{
+  return lower && upper && std::isfinite(*lower) && std::isfinite(*upper) && *lower <= 0.0F &&
+         *upper >= 0.0F && *lower <= *upper;
+}
+
+FirstOrderDubinsMppiKinematicLimits sanitizeKinematicLimits(
+  const FirstOrderDubinsMppiKinematicLimits & input)
+{
+  FirstOrderDubinsMppiKinematicLimits result;
+  if (input.max_velocity && std::isfinite(*input.max_velocity) && *input.max_velocity >= 0.0F) {
+    result.max_velocity = input.max_velocity;
+  }
+  if (isValidSignedInterval(
+        input.min_longitudinal_acceleration, input.max_longitudinal_acceleration)) {
+    result.min_longitudinal_acceleration = input.min_longitudinal_acceleration;
+    result.max_longitudinal_acceleration = input.max_longitudinal_acceleration;
+  }
+  if (isValidSignedInterval(input.min_longitudinal_jerk, input.max_longitudinal_jerk)) {
+    result.min_longitudinal_jerk = input.min_longitudinal_jerk;
+    result.max_longitudinal_jerk = input.max_longitudinal_jerk;
+  }
+  return result;
+}
+
+FirstOrderDubinsBicycleKinematicLimitData makeKinematicLimitCostData(
+  const FirstOrderDubinsMppiKinematicLimits & limits)
+{
+  FirstOrderDubinsBicycleKinematicLimitData result;
+  if (limits.max_velocity) {
+    result.active_mask |= kVelocityLimitActive;
+    result.min_velocity = 0.0F;
+    result.max_velocity = *limits.max_velocity;
+  }
+  if (limits.min_longitudinal_acceleration && limits.max_longitudinal_acceleration) {
+    result.active_mask |= kAccelerationLimitActive;
+    result.min_longitudinal_acceleration = *limits.min_longitudinal_acceleration;
+    result.max_longitudinal_acceleration = *limits.max_longitudinal_acceleration;
+  }
+  if (limits.min_longitudinal_jerk && limits.max_longitudinal_jerk) {
+    result.active_mask |= kJerkLimitActive;
+    result.min_longitudinal_jerk = *limits.min_longitudinal_jerk;
+    result.max_longitudinal_jerk = *limits.max_longitudinal_jerk;
+  }
+  return result;
+}
+
 using DYN = FirstOrderDubinsBicycle;
 using COST = FirstOrderDubinsBicycleCost<kRefHorizon>;
 using FB = ZeroFeedback<DYN, kMppiHorizon>;
@@ -87,7 +134,7 @@ using SAMPLER = mppi::sampling_distributions::GaussianDistribution<DYN::DYN_PARA
 using Mppi = VanillaMPPIController<DYN, COST, FB, kMppiHorizon, kNumRollouts, SAMPLER>;
 using CostBreakdown = FirstOrderDubinsMppiCostBreakdown;
 
-constexpr std::array<float CostBreakdown::*, 22> kCostBreakdownFields = {
+constexpr std::array<float CostBreakdown::*, 25> kCostBreakdownFields = {
   &CostBreakdown::speed,
   &CostBreakdown::track,
   &CostBreakdown::heading,
@@ -107,6 +154,9 @@ constexpr std::array<float CostBreakdown::*, 22> kCostBreakdownFields = {
   &CostBreakdown::lateral_jerk,
   &CostBreakdown::longitudinal_jerk,
   &CostBreakdown::steering_rate,
+  &CostBreakdown::kinematic_velocity_overlimit,
+  &CostBreakdown::kinematic_acceleration_overlimit,
+  &CostBreakdown::kinematic_jerk_overlimit,
   &CostBreakdown::running_total,
   &CostBreakdown::terminal_total,
   &CostBreakdown::total,
@@ -196,7 +246,10 @@ std::string formatCostBreakdown(const CostBreakdown & cost)
          << ", lateral_accel=" << cost.lateral_acceleration
          << ", lateral_jerk=" << cost.lateral_jerk
          << ", longitudinal_jerk=" << cost.longitudinal_jerk
-         << ", steer_rate=" << cost.steering_rate << '}';
+         << ", steer_rate=" << cost.steering_rate
+         << ", velocity_overlimit=" << cost.kinematic_velocity_overlimit
+         << ", acceleration_overlimit=" << cost.kinematic_acceleration_overlimit
+         << ", jerk_overlimit=" << cost.kinematic_jerk_overlimit << '}';
   return stream.str();
 }
 
@@ -259,6 +312,7 @@ void applyUserCostParams(
   cost_params.accel_cmd_coeff = user.accel_cmd_coeff;
   cost_params.steer_cmd_coeff = user.steer_cmd_coeff;
   cost_params.steer_rate_coeff = user.steer_rate_coeff;
+  cost_params.overlimit_coeff = user.overlimit_coeff;
   cost_params.lateral_acceleration_coeff = user.lateral_acceleration_coeff;
   cost_params.lateral_jerk_coeff = user.lateral_jerk_coeff;
   cost_params.longitudinal_jerk_coeff = user.longitudinal_jerk_coeff;
@@ -619,6 +673,7 @@ struct FirstOrderDubinsMppiInterface::Impl
   FirstOrderDubinsBicycleParams dyn;
   FirstOrderDubinsMppiVehicleParams vehicle_params{};
   FirstOrderDubinsMppiCostParams user_cost_params_{};
+  FirstOrderDubinsMppiKinematicLimits active_kinematic_limits{};
   MppiDebugTrajectoryLogger debug_trajectory_logger;
   COST cost;
   FirstOrderDubinsBicycleCostParams<kRefHorizon> cost_params{};
@@ -1156,7 +1211,8 @@ struct FirstOrderDubinsMppiInterface::Impl
     const std::optional<geometry_msgs::msg::AccelWithCovarianceStamped> & acceleration,
     const std::optional<autoware_vehicle_msgs::msg::SteeringReport> & steering_status,
     const TrackedObjects & tracked_objects_in, const std::vector<Segment> & road_borders_in,
-    const std::vector<Segment> & drivable_area_in)
+    const std::vector<Segment> & drivable_area_in,
+    const FirstOrderDubinsMppiKinematicLimits & kinematic_limits)
   {
     if (!initialized) {
       setup();
@@ -1167,6 +1223,8 @@ struct FirstOrderDubinsMppiInterface::Impl
     }
 
     diffusion_reference = reference;
+    active_kinematic_limits = sanitizeKinematicLimits(kinematic_limits);
+    cost.setKinematicLimits(makeKinematicLimitCostData(active_kinematic_limits));
     diffusion_reference_chord_length_s = detail::computeCumulativeChordLength(diffusion_reference);
     tracked_objects = ignore_obstacles ? TrackedObjects{} : tracked_objects_in;
     road_borders = ignore_road_borders ? std::vector<Segment>() : road_borders_in;
@@ -1239,9 +1297,14 @@ struct FirstOrderDubinsMppiInterface::Impl
     ego.y = x(static_cast<int>(FirstOrderDubinsBicycleParams::StateIndex::POS_Y));
     ego.yaw = x(static_cast<int>(FirstOrderDubinsBicycleParams::StateIndex::YAW));
     ego.velocity = x(static_cast<int>(FirstOrderDubinsBicycleParams::StateIndex::VEL_X));
-    const auto prepared_reference = detail::buildReferenceHorizon(
+    auto prepared_reference = detail::buildReferenceHorizon(
       diffusion_reference, ego, kRefHorizon, kDt, tracking_start_idx,
       &diffusion_reference_chord_length_s);
+    if (active_kinematic_limits.max_velocity) {
+      for (auto & sample : prepared_reference) {
+        sample.velocity = std::clamp(sample.velocity, 0.0F, *active_kinematic_limits.max_velocity);
+      }
+    }
     std::vector<mppi::path::PathReferenceSample> ref(prepared_reference.size());
     for (size_t i = 0; i < prepared_reference.size(); ++i) {
       ref[i].t = prepared_reference[i].time;
@@ -1404,6 +1467,12 @@ void FirstOrderDubinsMppiInterface::setCostParams(const FirstOrderDubinsMppiCost
 {
   if (!impl_) {
     throw std::runtime_error("FirstOrderDubinsMppiInterface implementation is missing");
+  }
+  if (
+    !std::isfinite(params.overlimit_coeff) || params.overlimit_coeff < 0.0F ||
+    !std::isfinite(params.crash_contact_penalty) || params.crash_contact_penalty < 0.0F) {
+    throw std::invalid_argument(
+      "MPPI overlimit_coeff and crash_contact_penalty must be finite and non-negative");
   }
   if (impl_->initialized) {
     impl_->teardown();
@@ -1619,7 +1688,8 @@ FirstOrderDubinsMppiOptimizationResult FirstOrderDubinsMppiInterface::optimizeTr
   const std::optional<geometry_msgs::msg::AccelWithCovarianceStamped> & acceleration,
   const std::optional<autoware_vehicle_msgs::msg::SteeringReport> & steering_status,
   const TrackedObjects & tracked_objects, const std::vector<Segment> & road_borders,
-  const std::vector<Segment> & drivable_area)
+  const std::vector<Segment> & drivable_area,
+  const FirstOrderDubinsMppiKinematicLimits & kinematic_limits)
 {
   if (!impl_) {
     throw std::runtime_error("FirstOrderDubinsMppiInterface implementation is missing");
@@ -1643,7 +1713,8 @@ FirstOrderDubinsMppiOptimizationResult FirstOrderDubinsMppiInterface::optimizeTr
   const auto start_time = std::chrono::steady_clock::now();
 
   impl_->updateDiffusionReference(
-    input, odometry, acceleration, steering_status, tracked_objects, road_borders, drivable_area);
+    input, odometry, acceleration, steering_status, tracked_objects, road_borders, drivable_area,
+    kinematic_limits);
   // Capture IC before runStep advances the ego state with the applied control.
   const DYN::state_array x_at_optimization = impl_->x;
   const FirstOrderDubinsMppiControl control = impl_->runStep();
@@ -1745,11 +1816,12 @@ FirstOrderDubinsMppiOptimizationResult FirstOrderDubinsMppiInterface::optimizeTr
     std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start_time)
       .count();
 
-  detail::setInitialEngageVelocity(output);
+  detail::setInitialEngageVelocity(output, impl_->active_kinematic_limits.max_velocity);
 
   result.trajectory = output;
   result.debug.reference_trajectory = input;
   result.debug.optimized_trajectory = output;
+  result.debug.active_kinematic_limits = impl_->active_kinematic_limits;
   result.debug.nominal_trajectory = buildNominalTrajectory(
     impl_->model, x_at_optimization, input, impl_->logged_nominal_accel,
     impl_->logged_nominal_steer);
@@ -1804,7 +1876,7 @@ FirstOrderDubinsMppiOptimizationResult FirstOrderDubinsMppiInterface::optimizeTr
     impl_->logged_nominal_steer, road_borders, drivable_area, tracked_objects,
     impl_->logged_hist_accel_tm2, impl_->logged_hist_steer_tm2, impl_->logged_hist_accel_tm1,
     impl_->logged_hist_steer_tm1, impl_->logged_delay_accel, impl_->logged_delay_steer,
-    impl_->logged_applied_accel, impl_->logged_applied_steer);
+    impl_->logged_applied_accel, impl_->logged_applied_steer, impl_->active_kinematic_limits);
 
   const auto validation_reasons = to_string(result.debug.validation.reasons);
   const auto cost_breakdown = formatCostBreakdown(result.debug.cost_breakdown);

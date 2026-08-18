@@ -43,6 +43,8 @@ struct FirstOrderDubinsMppiCostParams
   float accel_cmd_coeff{0.0F};
   float steer_cmd_coeff{0.0F};
   float steer_rate_coeff{0.0F};
+  /** Shared weight for optional VelocityLimit interval violations. */
+  float overlimit_coeff{10000.0F};
   /** Gaussian sampling std-dev on acceleration command [m/s^2] around u_nom. */
   float accel_cmd_std_dev{0.35F};
   /** Gaussian sampling std-dev on steer command [rad] around u_nom. */

@@ -9,6 +9,7 @@
 #include "autoware/mppi_optimizer/first_order_dubins_mppi_interface.hpp"
 
 #include <mppi/cost_functions/cost.cuh>
+#include <mppi/cost_functions/dubins/first_order_dubins_bicycle_kinematic_limits.cuh>
 #include <mppi/dynamics/dubins/first_order_dubins_bicycle.cuh>
 
 __host__ __device__ inline float computeSmoothBarrierCost(
@@ -53,6 +54,8 @@ struct FirstOrderDubinsBicycleCostParams : public CostParams<2>
   float steer_cmd_coeff = 0.0F;
   /** Direct cost on steer rate [rad/s]: (steer_cmd - steer) / steer_time_constant. */
   float steer_rate_coeff = 0.0F;
+  /** Shared cost weight for optional velocity, acceleration, and jerk interval violations. */
+  float overlimit_coeff = 10000.0F;
   float lateral_acceleration_coeff = 300.0F;
   float lateral_jerk_coeff = 300.0F;
   float longitudinal_jerk_coeff = 10.0F;
@@ -132,6 +135,8 @@ public:
 
   void setReferenceTrajectory(
     const float * x, const float * y, const float * v, int count, const float * yaw = nullptr);
+
+  void setKinematicLimits(const FirstOrderDubinsBicycleKinematicLimitData & limits);
 
   /**
    * Spatial corridor for lateral_distance / lateral crash / lateral yaw error.
@@ -264,6 +269,9 @@ public:
 
   __device__ float computeComfortCost(float * u, float * y, int timestep);
 
+  __host__ __device__ FirstOrderDubinsBicycleKinematicCost computeKinematicLimitCost(
+    float velocity, float longitudinal_acceleration, float longitudinal_jerk) const;
+
   __device__ float terminalCost(float * y, float * theta_c);
 
   float computeRunningCost(
@@ -277,6 +285,7 @@ public:
   float ref_y_[NUM_TIMESTEPS] = {};
   float ref_v_[NUM_TIMESTEPS] = {};
   float ref_yaw_[NUM_TIMESTEPS] = {};
+  FirstOrderDubinsBicycleKinematicLimitData kinematic_limits_{};
   int num_lateral_corridor_points_ = 0;
   float lateral_corridor_x_[kMaxLateralCorridorPoints] = {};
   float lateral_corridor_y_[kMaxLateralCorridorPoints] = {};

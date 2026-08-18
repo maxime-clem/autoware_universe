@@ -353,6 +353,18 @@ TEST(EngageVelocity, ChangesOnlyTheFirstTwoPointsWhenMovementIsRequested)
   setInitialEngageVelocity(stopping);
   EXPECT_FLOAT_EQ(stopping.points[0].longitudinal_velocity_mps, 0.0F);
   EXPECT_FLOAT_EQ(stopping.points[1].longitudinal_velocity_mps, 0.0F);
+
+  auto externally_stopped = makeTrajectory(4U, 1.0, 0.0F);
+  externally_stopped.points[3].longitudinal_velocity_mps = 1.0F;
+  setInitialEngageVelocity(externally_stopped, 0.0F);
+  EXPECT_FLOAT_EQ(externally_stopped.points[0].longitudinal_velocity_mps, 0.0F);
+  EXPECT_FLOAT_EQ(externally_stopped.points[1].longitudinal_velocity_mps, 0.0F);
+
+  auto externally_limited = makeTrajectory(4U, 1.0, 0.0F);
+  externally_limited.points[3].longitudinal_velocity_mps = 1.0F;
+  setInitialEngageVelocity(externally_limited, 0.1F);
+  EXPECT_FLOAT_EQ(externally_limited.points[0].longitudinal_velocity_mps, 0.1F);
+  EXPECT_FLOAT_EQ(externally_limited.points[1].longitudinal_velocity_mps, 0.1F);
 }
 
 }  // namespace

@@ -58,6 +58,7 @@ namespace
 
 using autoware::mppi_optimizer::FirstOrderDubinsMppiCostParams;
 using autoware::mppi_optimizer::FirstOrderDubinsMppiInterface;
+using autoware::mppi_optimizer::FirstOrderDubinsMppiKinematicLimits;
 using autoware::mppi_optimizer::FirstOrderDubinsMppiRuntimeOptions;
 using autoware::mppi_optimizer::FirstOrderDubinsMppiVehicleParams;
 using autoware::mppi_optimizer::formatMppiDebugFrameId;
@@ -99,6 +100,7 @@ void printUsage(const char * argv0)
                "Exact online parity: loads cost/vehicle/runtime params plus per-frame\n"
                "*_ego.csv, *_nominal.csv (REQUIRED warm-start u_nom), *_road_borders.csv,\n"
                "*_drivable.csv, *_objects.csv, *_control_history.csv, *_delay_buffer.csv.\n"
+               "Also restores per-frame *_kinematic_limits.csv when present.\n"
                "CLI --set and vehicle flags override logged values.\n"
                "After each frame, writes <out-dir>/<tag>_seed_nominal.csv from optimized u_opt\n"
                "for iterative re-seed via --nominal-csv.\n"
@@ -163,6 +165,8 @@ void applyCostParam(
     params.steer_cmd_coeff = value;
   } else if (key == "steer_rate_coeff") {
     params.steer_rate_coeff = value;
+  } else if (key == "overlimit_coeff") {
+    params.overlimit_coeff = value;
   } else if (key == "accel_cmd_std_dev") {
     params.accel_cmd_std_dev = value;
   } else if (key == "steer_cmd_std_dev") {
@@ -384,6 +388,28 @@ autoware_vehicle_msgs::msg::SteeringReport steeringFromReference(const Trajector
   return steering;
 }
 
+FirstOrderDubinsMppiKinematicLimits loadKinematicLimits(const std::string & path, bool & file_found)
+{
+  std::unordered_map<std::string, float> values;
+  file_found = loadMppiDebugKeyValueCsv(path, values);
+  FirstOrderDubinsMppiKinematicLimits result;
+  if (!file_found || values["active"] == 0.0F) {
+    return result;
+  }
+  const auto set_if_present = [&](const char * key, std::optional<float> & destination) {
+    const auto it = values.find(key);
+    if (it != values.end()) {
+      destination = it->second;
+    }
+  };
+  set_if_present("max_velocity", result.max_velocity);
+  set_if_present("min_longitudinal_acceleration", result.min_longitudinal_acceleration);
+  set_if_present("max_longitudinal_acceleration", result.max_longitudinal_acceleration);
+  set_if_present("min_longitudinal_jerk", result.min_longitudinal_jerk);
+  set_if_present("max_longitudinal_jerk", result.max_longitudinal_jerk);
+  return result;
+}
+
 }  // namespace
 
 int run(int argc, char ** argv);
@@ -534,6 +560,7 @@ int run(int argc, char ** argv)
   std::cout << "applied_params lambda=" << cost_params.lambda
             << " track_coeff=" << cost_params.track_coeff
             << " speed_coeff=" << cost_params.speed_coeff
+            << " overlimit_coeff=" << cost_params.overlimit_coeff
             << " heading_coeff=" << cost_params.heading_coeff
             << " steer_rate_coeff=" << cost_params.steer_rate_coeff << "\n";
   if (cost_params.lambda >= 5000.0F) {
@@ -681,8 +708,21 @@ int run(int argc, char ** argv)
       }
     }
 
+    bool kinematic_limits_file_found = false;
+    const auto kinematic_limits = loadKinematicLimits(
+      log_dir + "/" + tag + "_kinematic_limits.csv", kinematic_limits_file_found);
+    if (!kinematic_limits_file_found) {
+      static bool warned_missing_kinematic_limits = false;
+      if (!warned_missing_kinematic_limits) {
+        std::cerr << "WARNING: missing *_kinematic_limits.csv; optional kinematic barrier is "
+                     "inactive (re-log for exact online match).\n";
+        warned_missing_kinematic_limits = true;
+      }
+    }
+
     const auto result = frame_mppi.optimizeTrajectory(
-      reference, odom, accel, steering, tracked_objects, road_borders, drivable_area);
+      reference, odom, accel, steering, tracked_objects, road_borders, drivable_area,
+      kinematic_limits);
 
     const std::string opt_path = out_dir + "/" + tag + "_optimized.csv";
     if (!writeMppiDebugTrajectoryCsv(opt_path, result.debug.optimized_trajectory)) {
@@ -777,6 +817,11 @@ int run(int argc, char ** argv)
       breakdown_out << "comfort/lateral_jerk," << breakdown.lateral_jerk << "\n";
       breakdown_out << "comfort/longitudinal_jerk," << breakdown.longitudinal_jerk << "\n";
       breakdown_out << "comfort/steering_rate," << breakdown.steering_rate << "\n";
+      breakdown_out << "kinematic/velocity_overlimit," << breakdown.kinematic_velocity_overlimit
+                    << "\n";
+      breakdown_out << "kinematic/acceleration_overlimit,"
+                    << breakdown.kinematic_acceleration_overlimit << "\n";
+      breakdown_out << "kinematic/jerk_overlimit," << breakdown.kinematic_jerk_overlimit << "\n";
     }
 
     index_out << frame_id << "," << reference.header.stamp.sec << ","

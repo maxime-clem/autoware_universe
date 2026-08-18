@@ -28,6 +28,8 @@
       accel_cmd_coeff: 50.0
       steer_cmd_coeff: 250.0
       steer_rate_coeff: 20000.0
+      # Shared deadband-quadratic cost for optional VelocityLimit bounds.
+      overlimit_coeff: 10000.0
       # MPPI control-sample noise std-devs around the nominal (u_nom).
       accel_cmd_std_dev: 0.1
       steer_cmd_std_dev: 0.02
