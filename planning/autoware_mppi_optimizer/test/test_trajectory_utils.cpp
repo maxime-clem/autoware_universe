@@ -319,6 +319,91 @@ TEST(NominalControl, ForcedControlPadsClampsAndShiftHoldsTheTerminalCommand)
   EXPECT_FLOAT_EQ(shifted[3].accel_cmd, forced[3].accel_cmd);
 }
 
+TEST(NominalControlFilter, LeavesNominalExactlyUnchangedWithoutExternalLimits)
+{
+  const std::vector<FirstOrderDubinsMppiControl> nominal = {{-1.0F, 0.2F}, {0.5F, -0.3F}};
+  InitialState ego;
+  ego.velocity = -1.0F;
+  ego.acceleration = 0.4F;
+  FirstOrderDubinsMppiVehicleParams vehicle;
+
+  const auto filtered = filterNominalControlWithKinematicLimits(
+    nominal, ego, FirstOrderDubinsMppiKinematicLimits{}, vehicle, 1, {2.0F});
+
+  ASSERT_EQ(filtered.size(), nominal.size());
+  for (std::size_t i = 0; i < nominal.size(); ++i) {
+    EXPECT_FLOAT_EQ(filtered[i].accel_cmd, nominal[i].accel_cmd);
+    EXPECT_FLOAT_EQ(filtered[i].steer_cmd, nominal[i].steer_cmd);
+  }
+}
+
+TEST(NominalControlFilter, ClampsAccelerationAndAppliesJerkAtCommandApplicationTime)
+{
+  const std::vector<FirstOrderDubinsMppiControl> nominal = {{-3.0F, 0.2F}, {3.0F, -0.3F}};
+  InitialState ego;
+  ego.velocity = 1.0F;
+  ego.acceleration = 0.0F;
+  FirstOrderDubinsMppiVehicleParams vehicle;
+  vehicle.acc_time_constant = 0.2F;
+  vehicle.vel_rate_lim = 3.0F;
+  FirstOrderDubinsMppiKinematicLimits limits;
+  limits.min_longitudinal_acceleration = -2.0F;
+  limits.max_longitudinal_acceleration = 1.0F;
+  limits.min_longitudinal_jerk = -5.0F;
+  limits.max_longitudinal_jerk = 4.0F;
+
+  const auto filtered =
+    filterNominalControlWithKinematicLimits(nominal, ego, limits, vehicle, 0, {}, 0.1F);
+
+  ASSERT_EQ(filtered.size(), nominal.size());
+  EXPECT_FLOAT_EQ(filtered[0].accel_cmd, -1.0F);
+  EXPECT_NEAR(filtered[1].accel_cmd, 0.3F, 1.0E-6F);
+  EXPECT_FLOAT_EQ(filtered[0].steer_cmd, nominal[0].steer_cmd);
+  EXPECT_FLOAT_EQ(filtered[1].steer_cmd, nominal[1].steer_cmd);
+}
+
+TEST(NominalControlFilter, ZeroVelocityLimitSeedsStrongestDelayAwareBraking)
+{
+  const std::vector<FirstOrderDubinsMppiControl> nominal(4U, {0.0F, 0.1F});
+  InitialState ego;
+  ego.velocity = 4.0F;
+  ego.acceleration = 0.0F;
+  FirstOrderDubinsMppiVehicleParams vehicle;
+  vehicle.acc_time_constant = 0.1F;
+  vehicle.vel_rate_lim = 3.0F;
+  FirstOrderDubinsMppiKinematicLimits limits;
+  limits.max_velocity = 0.0F;
+  limits.min_longitudinal_acceleration = -2.0F;
+  limits.max_longitudinal_acceleration = 1.0F;
+  limits.min_longitudinal_jerk = -10.0F;
+  limits.max_longitudinal_jerk = 10.0F;
+
+  const auto filtered =
+    filterNominalControlWithKinematicLimits(nominal, ego, limits, vehicle, 1, {0.0F}, 0.1F);
+
+  ASSERT_EQ(filtered.size(), nominal.size());
+  EXPECT_FLOAT_EQ(filtered[0].accel_cmd, -1.0F);
+  EXPECT_FLOAT_EQ(filtered[1].accel_cmd, -2.0F);
+  EXPECT_FLOAT_EQ(filtered[2].accel_cmd, -2.0F);
+  EXPECT_FLOAT_EQ(filtered[3].accel_cmd, -2.0F);
+}
+
+TEST(NominalControlFilter, DoesNotImposeMinimumVelocityWithoutVelocityLimit)
+{
+  const std::vector<FirstOrderDubinsMppiControl> nominal(1U, {-1.0F, 0.1F});
+  InitialState ego;
+  ego.velocity = -2.0F;
+  FirstOrderDubinsMppiVehicleParams vehicle;
+  FirstOrderDubinsMppiKinematicLimits limits;
+  limits.min_longitudinal_acceleration = -2.0F;
+  limits.max_longitudinal_acceleration = 1.0F;
+
+  const auto filtered = filterNominalControlWithKinematicLimits(nominal, ego, limits, vehicle);
+
+  ASSERT_EQ(filtered.size(), nominal.size());
+  EXPECT_FLOAT_EQ(filtered[0].accel_cmd, nominal[0].accel_cmd);
+}
+
 TEST(OutputConversion, OverwritesOnlyAvailablePostStepSamples)
 {
   const auto input = makeTrajectory(3U, 1.0, 2.0F);
