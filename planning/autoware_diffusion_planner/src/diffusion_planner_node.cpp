@@ -51,6 +51,39 @@ using diagnostic_msgs::msg::DiagnosticStatus;
 
 namespace
 {
+autoware::mppi_optimizer::FirstOrderDubinsMppiKinematicLimits make_mppi_kinematic_limits(
+  const VelocityLimit & message)
+{
+  autoware::mppi_optimizer::FirstOrderDubinsMppiKinematicLimits result;
+  if (!std::isfinite(message.max_velocity) || message.max_velocity < 0.0F) {
+    return result;
+  }
+  result.max_velocity = message.max_velocity;
+  if (!message.use_constraints) {
+    return result;
+  }
+
+  const auto & constraints = message.constraints;
+  const bool valid_acceleration =
+    std::isfinite(constraints.min_acceleration) && std::isfinite(constraints.max_acceleration) &&
+    constraints.min_acceleration <= 0.0F && constraints.max_acceleration >= 0.0F &&
+    constraints.min_acceleration <= constraints.max_acceleration;
+  if (valid_acceleration) {
+    result.min_longitudinal_acceleration = constraints.min_acceleration;
+    result.max_longitudinal_acceleration = constraints.max_acceleration;
+  }
+
+  const bool valid_jerk = std::isfinite(constraints.min_jerk) &&
+                          std::isfinite(constraints.max_jerk) && constraints.min_jerk <= 0.0F &&
+                          constraints.max_jerk >= 0.0F &&
+                          constraints.min_jerk <= constraints.max_jerk;
+  if (valid_jerk) {
+    result.min_longitudinal_jerk = constraints.min_jerk;
+    result.max_longitudinal_jerk = constraints.max_jerk;
+  }
+  return result;
+}
+
 std::string compute_file_hash_hex(const std::string & path)
 {
   constexpr std::size_t HASH_READ_BUFFER_BYTES = 64 * 1024;
@@ -709,10 +742,28 @@ void DiffusionPlanner::on_timer()
       const auto drivable_area_subset =
         extended_route_handler_->get_drivable_area_around_trajectory(
           planner_output.trajectory, margin);
+      const auto external_velocity_limit = sub_external_velocity_limit_.take_data();
+      const auto kinematic_limits =
+        external_velocity_limit ? make_mppi_kinematic_limits(*external_velocity_limit)
+                                : autoware::mppi_optimizer::FirstOrderDubinsMppiKinematicLimits{};
+      if (external_velocity_limit && !kinematic_limits.max_velocity) {
+        RCLCPP_WARN_THROTTLE(
+          get_logger(), *get_clock(), 5000,
+          "Ignoring invalid external VelocityLimit max_velocity=%f",
+          external_velocity_limit->max_velocity);
+      }
+      if (
+        external_velocity_limit && external_velocity_limit->use_constraints &&
+        (!kinematic_limits.min_longitudinal_acceleration ||
+         !kinematic_limits.min_longitudinal_jerk)) {
+        RCLCPP_WARN_THROTTLE(
+          get_logger(), *get_clock(), 5000,
+          "Ignoring invalid external VelocityLimit acceleration and/or jerk interval");
+      }
       const auto mppi_result = mppi_optimizer_->optimizeTrajectory(
         planner_output.trajectory, frame_context->ego_kinematic_state, ego_acceleration_for_mppi,
         ego_steering, all_targets, to_mppi_segments(road_borders_subset),
-        to_mppi_segments(drivable_area_subset));
+        to_mppi_segments(drivable_area_subset), kinematic_limits);
       pub_mppi_markers_->publish(
         autoware::mppi_optimizer::createMppiDebugMarkers(
           mppi_result.debug, road_borders_subset, drivable_area_subset, avoidance_targets,
@@ -873,6 +924,26 @@ void DiffusionPlanner::publish_mppi_cost_diagnostics(
   diagnostics_mppi_cost_->add_key_value("comfort/lateral_jerk", cost.lateral_jerk);
   diagnostics_mppi_cost_->add_key_value("comfort/longitudinal_jerk", cost.longitudinal_jerk);
   diagnostics_mppi_cost_->add_key_value("comfort/steering_rate", cost.steering_rate);
+  diagnostics_mppi_cost_->add_key_value(
+    "kinematic/velocity_overlimit", cost.kinematic_velocity_overlimit);
+  diagnostics_mppi_cost_->add_key_value(
+    "kinematic/acceleration_overlimit", cost.kinematic_acceleration_overlimit);
+  diagnostics_mppi_cost_->add_key_value("kinematic/jerk_overlimit", cost.kinematic_jerk_overlimit);
+  const auto & limits = debug.active_kinematic_limits;
+  diagnostics_mppi_cost_->add_key_value(
+    "kinematic/max_velocity",
+    limits.max_velocity ? std::to_string(*limits.max_velocity) : std::string{"inactive"});
+  diagnostics_mppi_cost_->add_key_value(
+    "kinematic/acceleration_interval",
+    limits.min_longitudinal_acceleration && limits.max_longitudinal_acceleration
+      ? "[" + std::to_string(*limits.min_longitudinal_acceleration) + ", " +
+          std::to_string(*limits.max_longitudinal_acceleration) + "]"
+      : std::string{"inactive"});
+  diagnostics_mppi_cost_->add_key_value(
+    "kinematic/jerk_interval", limits.min_longitudinal_jerk && limits.max_longitudinal_jerk
+                                 ? "[" + std::to_string(*limits.min_longitudinal_jerk) + ", " +
+                                     std::to_string(*limits.max_longitudinal_jerk) + "]"
+                                 : std::string{"inactive"});
   diagnostics_mppi_cost_->add_key_value(
     "validation_reason", autoware::mppi_optimizer::to_string(debug.validation.reasons));
   diagnostics_mppi_cost_->add_key_value(

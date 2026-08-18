@@ -305,6 +305,9 @@ void FirstOrderDubinsBicycleCostImpl<CLASS_T, NUM_TIMESTEPS, PARAMS_T, DYN_PARAM
   HANDLE_ERROR(cudaMemcpyAsync(
     this->cost_d_->ref_yaw_, ref_yaw_, sizeof(ref_yaw_), cudaMemcpyHostToDevice, this->stream_));
   HANDLE_ERROR(cudaMemcpyAsync(
+    &this->cost_d_->kinematic_limits_, &kinematic_limits_, sizeof(kinematic_limits_),
+    cudaMemcpyHostToDevice, this->stream_));
+  HANDLE_ERROR(cudaMemcpyAsync(
     &this->cost_d_->num_lateral_corridor_points_, &num_lateral_corridor_points_,
     sizeof(num_lateral_corridor_points_), cudaMemcpyHostToDevice, this->stream_));
   if (num_lateral_corridor_points_ > 0) {
@@ -379,6 +382,14 @@ void FirstOrderDubinsBicycleCostImpl<CLASS_T, NUM_TIMESTEPS, PARAMS_T, DYN_PARAM
       this->cost_d_->drivable_area_y1_, drivable_area_y1_, bytes, cudaMemcpyHostToDevice,
       this->stream_));
   }
+}
+
+template <class CLASS_T, int NUM_TIMESTEPS, class PARAMS_T, class DYN_PARAMS_T>
+void FirstOrderDubinsBicycleCostImpl<CLASS_T, NUM_TIMESTEPS, PARAMS_T, DYN_PARAMS_T>::
+  setKinematicLimits(const FirstOrderDubinsBicycleKinematicLimitData & limits)
+{
+  kinematic_limits_ = limits;
+  dataToDevice();
 }
 
 template <class CLASS_T, int NUM_TIMESTEPS, class PARAMS_T, class DYN_PARAMS_T>
@@ -980,6 +991,12 @@ FirstOrderDubinsBicycleCostImpl<CLASS_T, NUM_TIMESTEPS, PARAMS_T, DYN_PARAMS_T>:
   result.longitudinal_jerk =
     this->params_.longitudinal_jerk_coeff * longitudinal_jerk * longitudinal_jerk;
   result.steering_rate = this->params_.steer_rate_coeff * steer_rate * steer_rate;
+  const auto kinematic_cost = computeKinematicLimitCost(
+    y[static_cast<int>(O::BASELINK_VEL_B_X)], y[static_cast<int>(O::ACCELERATION)],
+    longitudinal_jerk);
+  result.kinematic_velocity_overlimit = kinematic_cost.velocity;
+  result.kinematic_acceleration_overlimit = kinematic_cost.acceleration;
+  result.kinematic_jerk_overlimit = kinematic_cost.jerk;
 
   result.running_total = result.componentTotal();
   result.total = result.running_total;
@@ -1189,6 +1206,18 @@ FirstOrderDubinsBicycleCostImpl<CLASS_T, NUM_TIMESTEPS, PARAMS_T, DYN_PARAMS_T>:
 }
 
 template <class CLASS_T, int NUM_TIMESTEPS, class PARAMS_T, class DYN_PARAMS_T>
+__host__ __device__ FirstOrderDubinsBicycleKinematicCost
+FirstOrderDubinsBicycleCostImpl<CLASS_T, NUM_TIMESTEPS, PARAMS_T, DYN_PARAMS_T>::
+  computeKinematicLimitCost(
+    const float velocity, const float longitudinal_acceleration,
+    const float longitudinal_jerk) const
+{
+  return computeCappedKinematicIntervalCost(
+    kinematic_limits_, this->params_.overlimit_coeff, this->params_.crash_contact_penalty, velocity,
+    longitudinal_acceleration, longitudinal_jerk);
+}
+
+template <class CLASS_T, int NUM_TIMESTEPS, class PARAMS_T, class DYN_PARAMS_T>
 float FirstOrderDubinsBicycleCostImpl<CLASS_T, NUM_TIMESTEPS, PARAMS_T, DYN_PARAMS_T>::
   computeComfortCost(
     const Eigen::Ref<const control_array> & u, const Eigen::Ref<const output_array> & y,
@@ -1201,10 +1230,13 @@ float FirstOrderDubinsBicycleCostImpl<CLASS_T, NUM_TIMESTEPS, PARAMS_T, DYN_PARA
   float steer_rate = 0.0F;
   comfortTerms(
     this->params_, u.data(), y.data(), lateral_accel, lateral_jerk, longitudinal_jerk, steer_rate);
+  const auto kinematic_cost = computeKinematicLimitCost(
+    y(static_cast<int>(O::BASELINK_VEL_B_X)), y(static_cast<int>(O::ACCELERATION)),
+    longitudinal_jerk);
   return this->params_.lateral_acceleration_coeff * lateral_accel * lateral_accel +
          this->params_.lateral_jerk_coeff * lateral_jerk * lateral_jerk +
          this->params_.longitudinal_jerk_coeff * longitudinal_jerk * longitudinal_jerk +
-         this->params_.steer_rate_coeff * steer_rate * steer_rate;
+         this->params_.steer_rate_coeff * steer_rate * steer_rate + kinematic_cost.total;
 }
 
 template <class CLASS_T, int NUM_TIMESTEPS, class PARAMS_T, class DYN_PARAMS_T>
@@ -1218,10 +1250,13 @@ FirstOrderDubinsBicycleCostImpl<CLASS_T, NUM_TIMESTEPS, PARAMS_T, DYN_PARAMS_T>:
   float longitudinal_jerk = 0.0F;
   float steer_rate = 0.0F;
   comfortTerms(this->params_, u, y, lateral_accel, lateral_jerk, longitudinal_jerk, steer_rate);
+  const auto kinematic_cost = computeKinematicLimitCost(
+    y[static_cast<int>(O::BASELINK_VEL_B_X)], y[static_cast<int>(O::ACCELERATION)],
+    longitudinal_jerk);
   return this->params_.lateral_acceleration_coeff * lateral_accel * lateral_accel +
          this->params_.lateral_jerk_coeff * lateral_jerk * lateral_jerk +
          this->params_.longitudinal_jerk_coeff * longitudinal_jerk * longitudinal_jerk +
-         this->params_.steer_rate_coeff * steer_rate * steer_rate;
+         this->params_.steer_rate_coeff * steer_rate * steer_rate + kinematic_cost.total;
 }
 
 template <class CLASS_T, int NUM_TIMESTEPS, class PARAMS_T, class DYN_PARAMS_T>

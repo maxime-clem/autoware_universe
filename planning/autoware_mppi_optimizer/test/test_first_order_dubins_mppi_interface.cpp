@@ -15,6 +15,8 @@
 #include "autoware/mppi_optimizer/detail/trajectory_utils.hpp"
 #include "autoware/mppi_optimizer/first_order_dubins_mppi_interface.hpp"
 
+#include <mppi/cost_functions/dubins/first_order_dubins_bicycle_kinematic_limits.cuh>
+
 #include <autoware_perception_msgs/msg/tracked_objects.hpp>
 
 #include <cuda_runtime_api.h>
@@ -64,10 +66,58 @@ FirstOrderDubinsMppiOptimizationResult optimize(
   FirstOrderDubinsMppiInterface & interface, const Trajectory & trajectory,
   const Odometry & odometry = makeOdometry(),
   const TrackedObjects & tracked_objects = TrackedObjects{},
-  const std::vector<Segment> & road_borders = {})
+  const std::vector<Segment> & road_borders = {},
+  const FirstOrderDubinsMppiKinematicLimits & kinematic_limits = {})
 {
   return interface.optimizeTrajectory(
-    trajectory, odometry, std::nullopt, std::nullopt, tracked_objects, road_borders, {});
+    trajectory, odometry, std::nullopt, std::nullopt, tracked_objects, road_borders, {},
+    kinematic_limits);
+}
+
+TEST(KinematicLimitCost, NormalizesIntervalsAndCapsAggregate)
+{
+  const FirstOrderDubinsBicycleKinematicLimitData inactive_limits;
+  const auto inactive =
+    computeCappedKinematicIntervalCost(inactive_limits, 10.0F, 100.0F, -100.0F, 100.0F, -100.0F);
+  EXPECT_FLOAT_EQ(inactive.total, 0.0F);
+
+  FirstOrderDubinsBicycleKinematicLimitData limits;
+  limits.active_mask = kVelocityLimitActive | kAccelerationLimitActive | kJerkLimitActive;
+  limits.min_velocity = 0.0F;
+  limits.max_velocity = 2.0F;
+  limits.min_longitudinal_acceleration = -2.0F;
+  limits.max_longitudinal_acceleration = 2.0F;
+  limits.min_longitudinal_jerk = -3.0F;
+  limits.max_longitudinal_jerk = 3.0F;
+
+  const auto inside = computeCappedKinematicIntervalCost(limits, 10.0F, 100.0F, 1.0F, 0.0F, 0.0F);
+  EXPECT_FLOAT_EQ(inside.total, 0.0F);
+
+  const auto lower_velocity =
+    computeCappedKinematicIntervalCost(limits, 10.0F, 100.0F, -1.0F, 0.0F, 0.0F);
+  EXPECT_FLOAT_EQ(lower_velocity.velocity, 10.0F);
+  EXPECT_FLOAT_EQ(lower_velocity.total, 10.0F);
+
+  // Each raw violation normalizes to one velocity-equivalent unit before squaring:
+  // velocity: 3 - 2 = 1; acceleration: (4 - 2) * 0.5 = 1;
+  // jerk: (8 - 3) * 0.2 = 1.
+  const auto normalized =
+    computeCappedKinematicIntervalCost(limits, 10.0F, 100.0F, 3.0F, 4.0F, 8.0F);
+  EXPECT_FLOAT_EQ(normalized.velocity, 10.0F);
+  EXPECT_FLOAT_EQ(normalized.acceleration, 10.0F);
+  EXPECT_FLOAT_EQ(normalized.jerk, 10.0F);
+  EXPECT_FLOAT_EQ(normalized.total, 30.0F);
+
+  const auto capped = computeCappedKinematicIntervalCost(limits, 10.0F, 15.0F, 3.0F, 4.0F, 8.0F);
+  EXPECT_NEAR(capped.velocity, 5.0F, 1.0E-5F);
+  EXPECT_NEAR(capped.acceleration, 5.0F, 1.0E-5F);
+  EXPECT_NEAR(capped.jerk, 5.0F, 1.0E-5F);
+  EXPECT_LE(capped.total, 15.0F);
+
+  const auto extreme =
+    computeCappedKinematicIntervalCost(limits, 1.0E8F, 100000.0F, 1.0E30F, 1.0E30F, 1.0E30F);
+  EXPECT_TRUE(std::isfinite(extreme.total));
+  EXPECT_LE(extreme.total, 100000.0F);
 }
 
 Trajectory makeLaterallyOffsetTrajectory(const float first_point_y, const float remaining_y)
@@ -201,6 +251,40 @@ TEST_F(FirstOrderDubinsMppiInterfaceGpuTest, ProducesFinitePostStepTrajectoryAnd
        ++i) {
     EXPECT_TRUE(result.trajectory.points[i] == input.points[i]);
   }
+}
+
+TEST_F(FirstOrderDubinsMppiInterfaceGpuTest, ActiveLimitCostRemainsFiniteUnderExtremeViolations)
+{
+  FirstOrderDubinsMppiCostParams cost_params;
+  cost_params.overlimit_coeff = 1.0E8F;
+  cost_params.crash_contact_penalty = 100000.0F;
+  interface_->setCostParams(cost_params);
+
+  FirstOrderDubinsMppiKinematicLimits limits;
+  limits.max_velocity = 0.0F;
+  limits.min_longitudinal_acceleration = -0.1F;
+  limits.max_longitudinal_acceleration = 0.1F;
+  limits.min_longitudinal_jerk = -0.1F;
+  limits.max_longitudinal_jerk = 0.1F;
+
+  auto odometry = makeOdometry();
+  odometry.twist.twist.linear.x = 30.0;
+  const auto result =
+    optimize(*interface_, makeStraightTrajectory(85U), odometry, TrackedObjects{}, {}, limits);
+
+  EXPECT_TRUE(std::isfinite(result.debug.baseline_cost));
+  EXPECT_TRUE(std::isfinite(result.debug.cost_breakdown.total));
+  EXPECT_GT(result.debug.cost_breakdown.kinematic_velocity_overlimit, 0.0F);
+  std::vector<float> costs;
+  std::vector<float> weights;
+  ASSERT_TRUE(interface_->copySampleCostDistribution(costs, weights));
+  ASSERT_FALSE(weights.empty());
+  float weight_sum = 0.0F;
+  for (const float weight : weights) {
+    EXPECT_TRUE(std::isfinite(weight));
+    weight_sum += weight;
+  }
+  EXPECT_NEAR(weight_sum, 1.0F, 1.0E-3F);
 }
 
 TEST_F(FirstOrderDubinsMppiInterfaceGpuTest, AppliesPerChannelActuatorDelayWithoutRefShift)

@@ -63,7 +63,8 @@ struct OptimizedState
 
 [[nodiscard]] bool isOptimizationRequired(const Trajectory & trajectory, double min_length);
 
-void setInitialEngageVelocity(Trajectory & trajectory);
+void setInitialEngageVelocity(
+  Trajectory & trajectory, const std::optional<float> & max_velocity = std::nullopt);
 
 [[nodiscard]] InitialState makeInitialState(
   const Odometry & odometry,

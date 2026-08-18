@@ -160,6 +160,7 @@ public:
         out << "accel_cmd_coeff," << cost.accel_cmd_coeff << "\n";
         out << "steer_cmd_coeff," << cost.steer_cmd_coeff << "\n";
         out << "steer_rate_coeff," << cost.steer_rate_coeff << "\n";
+        out << "overlimit_coeff," << cost.overlimit_coeff << "\n";
         out << "accel_cmd_std_dev," << cost.accel_cmd_std_dev << "\n";
         out << "steer_cmd_std_dev," << cost.steer_cmd_std_dev << "\n";
         out << "nominal_curvature_min_chord_length_m," << cost.nominal_curvature_min_chord_length_m
@@ -230,7 +231,7 @@ public:
     const float hist_accel_tm2, const float hist_steer_tm2, const float hist_accel_tm1,
     const float hist_steer_tm1, const std::vector<float> & delay_accel_cmd,
     const std::vector<float> & delay_steer_cmd, const float applied_accel_cmd,
-    const float applied_steer_cmd)
+    const float applied_steer_cmd, const FirstOrderDubinsMppiKinematicLimits & kinematic_limits)
   {
     if (!enabled_) {
       return;
@@ -262,6 +263,8 @@ public:
       directory_ + "/" + frame_tag + "_delay_buffer.csv", delay_accel_cmd, delay_steer_cmd);
     writeAppliedCsv(
       directory_ + "/" + frame_tag + "_applied.csv", applied_accel_cmd, applied_steer_cmd);
+    writeKinematicLimitsCsv(
+      directory_ + "/" + frame_tag + "_kinematic_limits.csv", kinematic_limits);
 
     const auto & stamp = reference.header.stamp.sec != 0 || reference.header.stamp.nanosec != 0
                            ? reference.header.stamp
@@ -432,6 +435,33 @@ private:
     out << "accel_cmd,steer_cmd\n";
     out << std::setprecision(9) << std::fixed;
     out << accel_cmd << "," << steer_cmd << "\n";
+  }
+
+  static void writeKinematicLimitsCsv(
+    const std::string & path, const FirstOrderDubinsMppiKinematicLimits & limits)
+  {
+    std::ofstream out(path);
+    if (!out) {
+      return;
+    }
+    out << "key,value\n";
+    out << std::setprecision(9) << std::fixed;
+    const bool active = limits.max_velocity || limits.min_longitudinal_acceleration ||
+                        limits.max_longitudinal_acceleration || limits.min_longitudinal_jerk ||
+                        limits.max_longitudinal_jerk;
+    out << "active," << (active ? 1 : 0) << "\n";
+    if (limits.max_velocity) {
+      out << "min_velocity,0.0\n";
+      out << "max_velocity," << *limits.max_velocity << "\n";
+    }
+    if (limits.min_longitudinal_acceleration && limits.max_longitudinal_acceleration) {
+      out << "min_longitudinal_acceleration," << *limits.min_longitudinal_acceleration << "\n";
+      out << "max_longitudinal_acceleration," << *limits.max_longitudinal_acceleration << "\n";
+    }
+    if (limits.min_longitudinal_jerk && limits.max_longitudinal_jerk) {
+      out << "min_longitudinal_jerk," << *limits.min_longitudinal_jerk << "\n";
+      out << "max_longitudinal_jerk," << *limits.max_longitudinal_jerk << "\n";
+    }
   }
 
   bool enabled_{false};

@@ -53,7 +53,7 @@ bool isOptimizationRequired(const Trajectory & trajectory, const double min_leng
   return !is_stopping || !(length < min_length);
 }
 
-void setInitialEngageVelocity(Trajectory & trajectory)
+void setInitialEngageVelocity(Trajectory & trajectory, const std::optional<float> & max_velocity)
 {
   constexpr float engage_velocity = 0.25F;
   if (trajectory.points.size() < 3U) {
@@ -63,8 +63,10 @@ void setInitialEngageVelocity(Trajectory & trajectory)
     trajectory.points.begin(), trajectory.points.end(),
     [](const auto & point) { return point.longitudinal_velocity_mps > engage_velocity; });
   if (wants_to_move && trajectory.points[0].longitudinal_velocity_mps < 0.05F) {
-    trajectory.points[0].longitudinal_velocity_mps = engage_velocity;
-    trajectory.points[1].longitudinal_velocity_mps = engage_velocity;
+    const float bounded_engage_velocity =
+      max_velocity ? std::min(engage_velocity, *max_velocity) : engage_velocity;
+    trajectory.points[0].longitudinal_velocity_mps = bounded_engage_velocity;
+    trajectory.points[1].longitudinal_velocity_mps = bounded_engage_velocity;
   }
 }
 
