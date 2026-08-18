@@ -86,6 +86,20 @@ void setInitialEngageVelocity(
   const std::vector<float> & acceleration_commands, const std::vector<float> & steering_commands,
   const FirstOrderDubinsMppiVehicleParams & vehicle_params, int horizon = kMppiHorizon);
 
+/**
+ * Filter an MPPI nominal control sequence through optional longitudinal kinematic limits.
+ *
+ * The filter predicts the first-order acceleration state through the pending input-delay queue.
+ * It preserves steering, clamps acceleration commands to active acceleration bounds, applies
+ * active jerk bounds at the time each command reaches the plant, and biases acceleration toward
+ * the admissible boundary while predicted velocity is outside [0, max_velocity].
+ */
+[[nodiscard]] std::vector<FirstOrderDubinsMppiControl> filterNominalControlWithKinematicLimits(
+  const std::vector<FirstOrderDubinsMppiControl> & nominal, const InitialState & initial_state,
+  const FirstOrderDubinsMppiKinematicLimits & limits,
+  const FirstOrderDubinsMppiVehicleParams & vehicle_params, int acceleration_delay_steps = 0,
+  const std::vector<float> & acceleration_delay_buffer = {}, float dt = kMppiDt);
+
 [[nodiscard]] std::vector<FirstOrderDubinsMppiControl> shiftNominalControl(
   const std::vector<FirstOrderDubinsMppiControl> & previous, int horizon = kMppiHorizon);
 

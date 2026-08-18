@@ -1145,6 +1145,24 @@ struct FirstOrderDubinsMppiInterface::Impl
     }
   }
 
+  void filterNominalControl(const detail::InitialState & ego)
+  {
+    const int accel_idx =
+      static_cast<int>(FirstOrderDubinsBicycleParams::ControlIndex::ACCELERATION_CMD);
+    const int steer_idx = static_cast<int>(FirstOrderDubinsBicycleParams::ControlIndex::STEER_CMD);
+    std::vector<FirstOrderDubinsMppiControl> nominal(static_cast<size_t>(kMppiHorizon));
+    for (int t = 0; t < kMppiHorizon; ++t) {
+      nominal[static_cast<size_t>(t)] = {u_nom(accel_idx, t), u_nom(steer_idx, t)};
+    }
+    const auto filtered = detail::filterNominalControlWithKinematicLimits(
+      nominal, ego, active_kinematic_limits, vehicle_params, acc_delay_steps, accel_delay_buffer,
+      kDt);
+    for (int t = 0; t < kMppiHorizon; ++t) {
+      u_nom(accel_idx, t) = filtered[static_cast<size_t>(t)].accel_cmd;
+      u_nom(steer_idx, t) = filtered[static_cast<size_t>(t)].steer_cmd;
+    }
+  }
+
   void snapshotNominalForLog()
   {
     const int accel_idx =
@@ -1164,8 +1182,19 @@ struct FirstOrderDubinsMppiInterface::Impl
     if (forced_nominal_pending) {
       seedNominalControlFromForced();
       forced_nominal_pending = false;
-      snapshotNominalForLog();
-      return;
+    } else {
+      // After a tracking reset, step_count is 0 and u_opt was cleared — fall back to DP / MPT
+      // seed. Also reseed when departing from a stop: shifted last u_opt is usually near-zero /
+      // braking.
+      constexpr float kStoppedVelocityMps = 0.05F;
+      const bool started_from_stop = std::abs(ego.velocity) < kStoppedVelocityMps;
+      if (use_last_control_as_nominal && step_count > 0 && !started_from_stop) {
+        seedNominalControlFromLastOptimized();
+      } else if (use_temporal_mpt_as_nominal) {
+        seedNominalControlFromTemporalMpt(reference, ego);
+      } else {
+        seedNominalControlFromDiffusionReference(reference, start_idx);
+      }
     }
     // After a tracking reset, step_count is 0 and u_opt was cleared — fall back to DP / MPT seed.
     // Also reseed when departing from a stop: shifted last u_opt is usually near-zero / braking.
@@ -1194,6 +1223,7 @@ struct FirstOrderDubinsMppiInterface::Impl
         temporal_mpt_nominal_seeder.resetWarmStart();
       }
       seedNominalControlFromTemporalMpt(reference, ego);
+      filterNominalControl(ego);
       snapshotNominalForLog();
       return;
     }
@@ -1203,6 +1233,7 @@ struct FirstOrderDubinsMppiInterface::Impl
       return;
     }
     seedNominalControlFromDiffusionReference(reference, start_idx);
+    filterNominalControl(ego);
     snapshotNominalForLog();
   }
 

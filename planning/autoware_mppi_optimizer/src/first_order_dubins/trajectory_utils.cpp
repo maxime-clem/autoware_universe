@@ -21,6 +21,8 @@
 
 #include <algorithm>
 #include <cmath>
+#include <deque>
+#include <limits>
 #include <vector>
 
 namespace autoware::mppi_optimizer::detail
@@ -258,6 +260,117 @@ std::vector<FirstOrderDubinsMppiControl> buildForcedNominalControl(
       std::clamp(steering, -vehicle_params.max_steer_angle, vehicle_params.max_steer_angle);
   }
   return nominal;
+}
+
+std::vector<FirstOrderDubinsMppiControl> filterNominalControlWithKinematicLimits(
+  const std::vector<FirstOrderDubinsMppiControl> & nominal, const InitialState & initial_state,
+  const FirstOrderDubinsMppiKinematicLimits & limits,
+  const FirstOrderDubinsMppiVehicleParams & vehicle_params, const int acceleration_delay_steps,
+  const std::vector<float> & acceleration_delay_buffer, const float dt)
+{
+  const bool has_velocity_limit =
+    limits.max_velocity && std::isfinite(*limits.max_velocity) && *limits.max_velocity >= 0.0F;
+  const bool has_acceleration_limits =
+    limits.min_longitudinal_acceleration && limits.max_longitudinal_acceleration &&
+    std::isfinite(*limits.min_longitudinal_acceleration) &&
+    std::isfinite(*limits.max_longitudinal_acceleration) &&
+    *limits.min_longitudinal_acceleration <= 0.0F &&
+    *limits.max_longitudinal_acceleration >= 0.0F &&
+    *limits.min_longitudinal_acceleration <= *limits.max_longitudinal_acceleration;
+  const bool has_jerk_limits =
+    limits.min_longitudinal_jerk && limits.max_longitudinal_jerk &&
+    std::isfinite(*limits.min_longitudinal_jerk) && std::isfinite(*limits.max_longitudinal_jerk) &&
+    *limits.min_longitudinal_jerk <= 0.0F && *limits.max_longitudinal_jerk >= 0.0F &&
+    *limits.min_longitudinal_jerk <= *limits.max_longitudinal_jerk;
+  if (!has_velocity_limit && !has_acceleration_limits && !has_jerk_limits) {
+    return nominal;
+  }
+
+  const float safe_dt = std::isfinite(dt) ? std::max(dt, 1.0E-4F) : kMppiDt;
+  const float acceleration_time_constant = std::isfinite(vehicle_params.acc_time_constant)
+                                             ? std::max(vehicle_params.acc_time_constant, 1.0E-4F)
+                                             : 1.0E-4F;
+  const float minimum_acceleration = std::max(
+    vehicle_params.min_accel(),
+    has_acceleration_limits ? *limits.min_longitudinal_acceleration : vehicle_params.min_accel());
+  const float maximum_acceleration = std::min(
+    vehicle_params.max_accel(),
+    has_acceleration_limits ? *limits.max_longitudinal_acceleration : vehicle_params.max_accel());
+  if (minimum_acceleration > maximum_acceleration) {
+    return nominal;
+  }
+
+  const float minimum_jerk =
+    has_jerk_limits ? *limits.min_longitudinal_jerk : -std::numeric_limits<float>::infinity();
+  const float maximum_jerk =
+    has_jerk_limits ? *limits.max_longitudinal_jerk : std::numeric_limits<float>::infinity();
+  const float maximum_velocity =
+    has_velocity_limit ? *limits.max_velocity : std::numeric_limits<float>::infinity();
+
+  const int delay_steps = std::max(0, acceleration_delay_steps);
+  std::deque<float> pending_commands;
+  for (int i = 0; i < delay_steps; ++i) {
+    const float fallback = initial_state.acceleration;
+    const float command = static_cast<std::size_t>(i) < acceleration_delay_buffer.size()
+                            ? acceleration_delay_buffer[static_cast<std::size_t>(i)]
+                            : fallback;
+    pending_commands.push_back(
+      std::clamp(command, vehicle_params.min_accel(), vehicle_params.max_accel()));
+  }
+
+  auto filtered = nominal;
+  float velocity = initial_state.velocity;
+  float acceleration =
+    std::clamp(initial_state.acceleration, vehicle_params.min_accel(), vehicle_params.max_accel());
+
+  const auto advance_plant =
+    [&](const float applied_command, float & predicted_velocity, float & predicted_acceleration) {
+      predicted_velocity += predicted_acceleration * safe_dt;
+      const float jerk = (applied_command - predicted_acceleration) / acceleration_time_constant;
+      predicted_acceleration = std::clamp(
+        predicted_acceleration + jerk * safe_dt, vehicle_params.min_accel(),
+        vehicle_params.max_accel());
+    };
+
+  for (std::size_t i = 0; i < filtered.size(); ++i) {
+    // Predict the state at which the command issued now will reach the plant.
+    float application_velocity = velocity;
+    float application_acceleration = acceleration;
+    for (const float pending_command : pending_commands) {
+      advance_plant(pending_command, application_velocity, application_acceleration);
+    }
+
+    float command = std::clamp(nominal[i].accel_cmd, minimum_acceleration, maximum_acceleration);
+    const float next_application_velocity =
+      application_velocity + application_acceleration * safe_dt;
+    if (next_application_velocity > maximum_velocity) {
+      const float braking_command = std::clamp(
+        (maximum_velocity - next_application_velocity) / safe_dt, minimum_acceleration,
+        maximum_acceleration);
+      command = std::min(command, braking_command);
+    } else if (has_velocity_limit && next_application_velocity < 0.0F) {
+      const float recovery_command = std::clamp(
+        -next_application_velocity / safe_dt, minimum_acceleration, maximum_acceleration);
+      command = std::max(command, recovery_command);
+    }
+
+    // Jerk is da/dt=(u_applied-a)/tau in the rollout model. Limit the command using the
+    // acceleration predicted at its application time, not the state at its issue time.
+    command = std::clamp(
+      command, application_acceleration + minimum_jerk * acceleration_time_constant,
+      application_acceleration + maximum_jerk * acceleration_time_constant);
+    command = std::clamp(command, minimum_acceleration, maximum_acceleration);
+    filtered[i].accel_cmd = command;
+
+    float applied_command = command;
+    if (!pending_commands.empty()) {
+      applied_command = pending_commands.front();
+      pending_commands.pop_front();
+      pending_commands.push_back(command);
+    }
+    advance_plant(applied_command, velocity, acceleration);
+  }
+  return filtered;
 }
 
 std::vector<FirstOrderDubinsMppiControl> shiftNominalControl(
