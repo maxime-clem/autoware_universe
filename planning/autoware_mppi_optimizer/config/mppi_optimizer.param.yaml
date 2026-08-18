@@ -30,10 +30,10 @@
     accel_cmd_std_dev: 0.1
     steer_cmd_std_dev: 0.02
     drivable_area_safe_margin: 0.0
-    drivable_area_barrier_weight: 10.0
+    drivable_area_barrier_weight: 0.0
     # Crash costs
     boundary_threshold: 0.8
-    lateral_boundary_soft_margin: 0.2 # Gradual barrier begins this far inside the hard lateral rejection threshold.
+    lateral_boundary_soft_margin: 0.2
     obstacle_collision_margin: 0.2
     road_border_collision_margin: 0.3
     obstacle_safe_margin: 0.5

@@ -900,9 +900,12 @@ FirstOrderDubinsBicycleCostImpl<CLASS_T, NUM_TIMESTEPS, PARAMS_T, DYN_PARAMS_T>:
     const float x, const float y, const float yaw, const int timestep, float & drivable_area_cost,
     float & obstacle_cost, float & road_border_cost) const
 {
-  drivable_area_cost = computeSmoothBarrierCost(
-    distanceToDrivableArea(x, y, yaw), this->params_.drivable_area_safe_margin,
-    this->params_.drivable_area_barrier_weight);
+  drivable_area_cost =
+    this->params_.drivable_area_barrier_weight == 0.0
+      ? 0.0
+      : computeSmoothBarrierCost(
+          distanceToDrivableArea(x, y, yaw), this->params_.drivable_area_safe_margin,
+          this->params_.drivable_area_barrier_weight);
   obstacle_cost = computeSmoothBarrierCost(
     distanceToClosestObstacle(x, y, yaw, timestep), this->params_.obstacle_safe_margin,
     this->params_.obstacle_barrier_weight);
