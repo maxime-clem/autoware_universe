@@ -126,31 +126,30 @@ void scaleCostBreakdown(CostBreakdown & breakdown, const float scale)
   }
 }
 
-CostBreakdown reconstructSelectedTrajectoryCost(
-  const COST & cost, DYN & model, const Mppi::state_trajectory & states,
+CostBreakdown reconstructControlTrajectoryCost(
+  const COST & cost, DYN & model, const DYN::state_array & initial_state,
   const Mppi::control_trajectory & controls)
 {
   CostBreakdown result;
-  const int horizon =
-    std::min({kMppiHorizon, static_cast<int>(states.cols()), static_cast<int>(controls.cols())});
+  const int horizon = std::min(kMppiHorizon, static_cast<int>(controls.cols()));
   if (horizon <= 0) {
     return result;
   }
 
   int crash_status = 0;
+  DYN::state_array state = initial_state;
   DYN::state_array next_state = DYN::state_array::Zero();
   DYN::state_array state_derivative = DYN::state_array::Zero();
   DYN::output_array output = DYN::output_array::Zero();
   for (int timestep = 0; timestep < horizon; ++timestep) {
-    // Replay the same post-step output used by the GPU rollout. getActualStateSeq() stores
-    // x[0]..x[H-1], so stepping x[t] with u[t] is also required to reconstruct x[H].
-    DYN::state_array state = states.col(timestep);
+    // Replay the same constrained, post-step outputs used by the GPU rollout, including x[H].
     DYN::control_array control = controls.col(timestep);
     model.enforceConstraints(state, control);
     model.step(
       state, next_state, state_derivative, control, output, static_cast<float>(timestep), kDt);
     accumulateCostBreakdown(
       result, cost.computeRunningCostBreakdown(output, control, timestep, &crash_status));
+    state = next_state;
   }
 
   // The GPU applies terminalCost() to the final post-step output and divides both running and
@@ -161,6 +160,23 @@ CostBreakdown reconstructSelectedTrajectoryCost(
   scaleCostBreakdown(result, 1.0F / static_cast<float>(horizon));
   result.evaluated_timesteps = static_cast<std::size_t>(horizon);
   return result;
+}
+
+Mppi::control_trajectory makeNominalControlTrajectory(
+  const std::vector<float> & acceleration_commands, const std::vector<float> & steering_commands)
+{
+  Mppi::control_trajectory controls = Mppi::control_trajectory::Zero();
+  const int horizon = std::min(
+    {kMppiHorizon, static_cast<int>(acceleration_commands.size()),
+     static_cast<int>(steering_commands.size())});
+  const int accel_idx =
+    static_cast<int>(FirstOrderDubinsBicycleParams::ControlIndex::ACCELERATION_CMD);
+  const int steer_idx = static_cast<int>(FirstOrderDubinsBicycleParams::ControlIndex::STEER_CMD);
+  for (int timestep = 0; timestep < horizon; ++timestep) {
+    controls(accel_idx, timestep) = acceleration_commands[static_cast<std::size_t>(timestep)];
+    controls(steer_idx, timestep) = steering_commands[static_cast<std::size_t>(timestep)];
+  }
+  return controls;
 }
 
 std::string formatCostBreakdown(const CostBreakdown & cost)
@@ -744,8 +760,8 @@ struct FirstOrderDubinsMppiInterface::Impl
     // Power-law PSD exponents (0 = white, 1 = pink, 2 = brown). Pink steer keeps lateral
     // reach while cutting high-frequency δ_cmd chatter from i.i.d. Gaussian samples.
     sp.exponents[static_cast<int>(FirstOrderDubinsBicycleParams::ControlIndex::ACCELERATION_CMD)] =
-      0.5F;
-    sp.exponents[static_cast<int>(FirstOrderDubinsBicycleParams::ControlIndex::STEER_CMD)] = 2.0F;
+      1.0F;
+    sp.exponents[static_cast<int>(FirstOrderDubinsBicycleParams::ControlIndex::STEER_CMD)] = 1.0F;
 #elif defined(USE_SMOOTH_MPPI)
     // Smooth-MPPI samples action derivatives and integrates with dt.
     sp.dt = kDt;
@@ -1698,7 +1714,11 @@ FirstOrderDubinsMppiOptimizationResult FirstOrderDubinsMppiInterface::optimizeTr
   }
   if (n_state > 0 && n_ctrl > 0) {
     result.debug.cost_breakdown =
-      reconstructSelectedTrajectoryCost(impl_->cost, impl_->model, state_trajectory, u_opt_traj);
+      reconstructControlTrajectoryCost(impl_->cost, impl_->model, x_at_optimization, u_opt_traj);
+    const auto nominal_controls =
+      makeNominalControlTrajectory(impl_->logged_nominal_accel, impl_->logged_nominal_steer);
+    result.debug.nominal_cost_breakdown = reconstructControlTrajectoryCost(
+      impl_->cost, impl_->model, x_at_optimization, nominal_controls);
   }
 
   MppiDebugEgoState ego;

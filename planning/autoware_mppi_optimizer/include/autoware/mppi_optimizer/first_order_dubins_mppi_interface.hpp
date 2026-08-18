@@ -178,6 +178,9 @@ struct FirstOrderDubinsMppiDebug
   std::vector<std::pair<float, float>> optimal_horizon;
   std::vector<FirstOrderDubinsMppiRollout> rollouts;
   FirstOrderDubinsMppiNominalControlProfile nominal_control_profile;
+  /** Cost of the pre-optimization nominal control rollout. */
+  FirstOrderDubinsMppiCostBreakdown nominal_cost_breakdown;
+  /** Cost of the final selected control rollout. */
   FirstOrderDubinsMppiCostBreakdown cost_breakdown;
   float baseline_cost{0.0F};
   /** Hard-constraint validation of the generated post-step states. */

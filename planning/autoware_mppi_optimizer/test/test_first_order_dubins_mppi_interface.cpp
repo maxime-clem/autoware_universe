@@ -153,6 +153,17 @@ TEST_F(FirstOrderDubinsMppiInterfaceGpuTest, ProducesFinitePostStepTrajectoryAnd
   EXPECT_NEAR(
     result.debug.cost_breakdown.running_total + result.debug.cost_breakdown.terminal_total,
     result.debug.cost_breakdown.total, 1.0E-3F);
+  EXPECT_EQ(
+    result.debug.nominal_cost_breakdown.evaluated_timesteps,
+    static_cast<std::size_t>(detail::kMppiHorizon));
+  EXPECT_TRUE(std::isfinite(result.debug.nominal_cost_breakdown.total));
+  EXPECT_NEAR(
+    result.debug.nominal_cost_breakdown.componentTotal(), result.debug.nominal_cost_breakdown.total,
+    1.0E-3F);
+  EXPECT_NEAR(
+    result.debug.nominal_cost_breakdown.running_total +
+      result.debug.nominal_cost_breakdown.terminal_total,
+    result.debug.nominal_cost_breakdown.total, 1.0E-3F);
   // baseline_cost is the best sampled rollout before MPPI's distribution update and smoothing;
   // it is intentionally not asserted equal to the reconstructed selected trajectory cost.
   EXPECT_TRUE(result.debug.validation.isValid());
