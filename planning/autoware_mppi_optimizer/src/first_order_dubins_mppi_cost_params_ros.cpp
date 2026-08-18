@@ -74,10 +74,6 @@ void declare_first_order_dubins_mppi_cost_params(rclcpp::Node & node, const std:
   node.declare_parameter(
     param_name(prefix, "drivable_area_barrier_weight"), defaults.drivable_area_barrier_weight);
   node.declare_parameter(param_name(prefix, "max_crash_penalty"), defaults.max_crash_penalty);
-  node.declare_parameter(param_name(prefix, "goal_pos_coeff"), defaults.goal_pos_coeff);
-  node.declare_parameter(param_name(prefix, "goal_speed_coeff"), defaults.goal_speed_coeff);
-  node.declare_parameter(param_name(prefix, "goal_yaw_coeff"), defaults.goal_yaw_coeff);
-  node.declare_parameter(param_name(prefix, "goal_terminal_scale"), defaults.goal_terminal_scale);
 }
 
 FirstOrderDubinsMppiCostParams get_first_order_dubins_mppi_cost_params(
@@ -143,14 +139,6 @@ FirstOrderDubinsMppiCostParams get_first_order_dubins_mppi_cost_params(
     node.get_parameter(param_name(prefix, "drivable_area_barrier_weight")).as_double());
   params.max_crash_penalty =
     static_cast<float>(node.get_parameter(param_name(prefix, "max_crash_penalty")).as_double());
-  params.goal_pos_coeff =
-    static_cast<float>(node.get_parameter(param_name(prefix, "goal_pos_coeff")).as_double());
-  params.goal_speed_coeff =
-    static_cast<float>(node.get_parameter(param_name(prefix, "goal_speed_coeff")).as_double());
-  params.goal_yaw_coeff =
-    static_cast<float>(node.get_parameter(param_name(prefix, "goal_yaw_coeff")).as_double());
-  params.goal_terminal_scale =
-    static_cast<float>(node.get_parameter(param_name(prefix, "goal_terminal_scale")).as_double());
   return params;
 }
 

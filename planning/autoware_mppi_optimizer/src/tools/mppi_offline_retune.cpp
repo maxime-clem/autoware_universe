@@ -756,6 +756,7 @@ int run(int argc, char ** argv)
       breakdown_out << "state/track," << breakdown.track << "\n";
       breakdown_out << "state/heading," << breakdown.heading << "\n";
       breakdown_out << "state/lateral_distance," << breakdown.lateral_distance << "\n";
+      breakdown_out << "state/lateral_boundary," << breakdown.lateral_boundary << "\n";
       breakdown_out << "state/lateral_yaw_error," << breakdown.lateral_yaw_error << "\n";
       breakdown_out << "state/remaining_distance," << breakdown.remaining_distance << "\n";
       breakdown_out << "state/path_overshoot," << breakdown.path_overshoot << "\n";

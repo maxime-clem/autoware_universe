@@ -188,7 +188,56 @@ TEST_F(TrajectoryValidatorTest, SmoothBarrierCostRampsUpQuadratically)
     precomputed_weight * 0.25F, 1.0E-3F);
 }
 
-TEST_F(TrajectoryValidatorTest, SmoothBarrierCostCapsAtFiniteMaximum)
+TEST_F(TrajectoryValidatorTest, LateralBoundaryBarrierActivatesInsideThreshold)
+{
+  auto params = makeParams();
+  params.speed_coeff = 0.0F;
+  params.track_coeff = 0.0F;
+  params.heading_coeff = 0.0F;
+  params.lateral_distance_coeff = 0.0F;
+  params.lateral_yaw_error_coeff = 0.0F;
+  params.remaining_distance_coeff = 0.0F;
+  params.path_overshoot_coeff = 0.0F;
+  params.track_center_coeff = 0.0F;
+  params.corner_buffer_coeff = 0.0F;
+  params.accel_cmd_coeff = 0.0F;
+  params.steer_cmd_coeff = 0.0F;
+  params.steer_rate_coeff = 0.0F;
+  params.lateral_acceleration_coeff = 0.0F;
+  params.lateral_jerk_coeff = 0.0F;
+  params.longitudinal_jerk_coeff = 0.0F;
+  params.drivable_area_barrier_weight = 0.0F;
+  params.obstacle_barrier_weight = 0.0F;
+  params.road_border_barrier_weight = 0.0F;
+  params.boundary_threshold = 0.8F;
+  params.lateral_boundary_soft_margin = 0.2F;
+  params.max_crash_penalty = 100000.0F;
+  params.lateral_boundary_barrier_weight =
+    params.max_crash_penalty /
+    (params.lateral_boundary_soft_margin * params.lateral_boundary_soft_margin);
+  cost_->setParams(params);
+  setStraightReference();
+
+  TestCost::output_array output = TestCost::output_array::Zero();
+  TestCost::control_array control = TestCost::control_array::Zero();
+  int crash_status = 0;
+
+  output(static_cast<int>(OutputIndex::BASELINK_POS_I_Y)) = 0.5F;
+  EXPECT_FLOAT_EQ(
+    cost_->computeRunningCostBreakdown(output, control, 0, &crash_status).lateral_boundary, 0.0F);
+
+  output(static_cast<int>(OutputIndex::BASELINK_POS_I_Y)) = 0.7F;
+  const auto inside = cost_->computeRunningCostBreakdown(output, control, 0, &crash_status);
+  EXPECT_NEAR(inside.lateral_boundary, 25000.0F, 1.0F);
+  EXPECT_NEAR(inside.total, inside.lateral_boundary, 1.0E-3F);
+
+  output(static_cast<int>(OutputIndex::BASELINK_POS_I_Y)) = 0.8F;
+  EXPECT_NEAR(
+    cost_->computeRunningCostBreakdown(output, control, 0, &crash_status).lateral_boundary,
+    params.max_crash_penalty, 1.0F);
+}
+
+TEST_F(TrajectoryValidatorTest, SmoothBarrierCostGrowsBeyondContactPenaltyForPenetration)
 {
   constexpr float safe_margin = 0.5F;
   constexpr float nominal_contact_penalty = 100000.0F;

@@ -156,6 +156,7 @@ public:
         out << "corner_buffer_coeff," << cost.corner_buffer_coeff << "\n";
         out << "corner_safe_margin," << cost.corner_safe_margin << "\n";
         out << "boundary_threshold," << cost.boundary_threshold << "\n";
+        out << "lateral_boundary_soft_margin," << cost.lateral_boundary_soft_margin << "\n";
         out << "accel_cmd_coeff," << cost.accel_cmd_coeff << "\n";
         out << "steer_cmd_coeff," << cost.steer_cmd_coeff << "\n";
         out << "steer_rate_coeff," << cost.steer_rate_coeff << "\n";
@@ -169,9 +170,7 @@ public:
         out << "obstacle_collision_margin," << cost.obstacle_collision_margin << "\n";
         out << "road_border_collision_margin," << cost.road_border_collision_margin << "\n";
         out << "obstacle_safe_margin," << cost.obstacle_safe_margin << "\n";
-        out << "obstacle_barrier_weight," << cost.obstacle_barrier_weight << "\n";
         out << "road_border_safe_margin," << cost.road_border_safe_margin << "\n";
-        out << "road_border_barrier_weight," << cost.road_border_barrier_weight << "\n";
         out << "drivable_area_safe_margin," << cost.drivable_area_safe_margin << "\n";
         out << "drivable_area_barrier_weight," << cost.drivable_area_barrier_weight << "\n";
         out << "max_crash_penalty," << cost.max_crash_penalty << "\n";

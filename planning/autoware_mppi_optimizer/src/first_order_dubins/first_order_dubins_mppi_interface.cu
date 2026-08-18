@@ -42,9 +42,11 @@
 #include <array>
 #include <chrono>
 #include <cmath>
+#include <iomanip>
 #include <memory>
 #include <numeric>
 #include <optional>
+#include <sstream>
 #include <stdexcept>
 #include <string>
 #include <utility>
@@ -85,11 +87,12 @@ using SAMPLER = mppi::sampling_distributions::GaussianDistribution<DYN::DYN_PARA
 using Mppi = VanillaMPPIController<DYN, COST, FB, kMppiHorizon, kNumRollouts, SAMPLER>;
 using CostBreakdown = FirstOrderDubinsMppiCostBreakdown;
 
-constexpr std::array<float CostBreakdown::*, 21> kCostBreakdownFields = {
+constexpr std::array<float CostBreakdown::*, 22> kCostBreakdownFields = {
   &CostBreakdown::speed,
   &CostBreakdown::track,
   &CostBreakdown::heading,
   &CostBreakdown::lateral_distance,
+  &CostBreakdown::lateral_boundary,
   &CostBreakdown::lateral_yaw_error,
   &CostBreakdown::remaining_distance,
   &CostBreakdown::path_overshoot,
@@ -130,30 +133,55 @@ CostBreakdown reconstructSelectedTrajectoryCost(
   CostBreakdown result;
   const int horizon =
     std::min({kMppiHorizon, static_cast<int>(states.cols()), static_cast<int>(controls.cols())});
-  if (horizon <= 0 || states.cols() <= 0) {
+  if (horizon <= 0) {
     return result;
   }
 
   int crash_status = 0;
+  DYN::state_array next_state = DYN::state_array::Zero();
+  DYN::state_array state_derivative = DYN::state_array::Zero();
   DYN::output_array output = DYN::output_array::Zero();
   for (int timestep = 0; timestep < horizon; ++timestep) {
-    // Use only getActualStateSeq states. Do not fall back to host-extrapolated x_final —
-    // that pad exists for published trajectory length and often trips lateral crash falsely.
-    const int state_col = std::min(timestep + 1, static_cast<int>(states.cols()) - 1);
-    const DYN::state_array state = states.col(state_col);
-    model.stateToOutput(state, output);
+    // Replay the same post-step output used by the GPU rollout. getActualStateSeq() stores
+    // x[0]..x[H-1], so stepping x[t] with u[t] is also required to reconstruct x[H].
+    DYN::state_array state = states.col(timestep);
+    DYN::control_array control = controls.col(timestep);
+    model.enforceConstraints(state, control);
+    model.step(
+      state, next_state, state_derivative, control, output, static_cast<float>(timestep), kDt);
     accumulateCostBreakdown(
-      result,
-      cost.computeRunningCostBreakdown(output, controls.col(timestep), timestep, &crash_status));
+      result, cost.computeRunningCostBreakdown(output, control, timestep, &crash_status));
   }
 
-  model.stateToOutput(states.col(states.cols() - 1), output);
+  // The GPU applies terminalCost() to the final post-step output and divides both running and
+  // terminal costs by the configured horizon.
   accumulateCostBreakdown(result, cost.computeTerminalCostBreakdown(output));
 
   // MPPI-Generic stores the horizon-average of both running and terminal costs.
   scaleCostBreakdown(result, 1.0F / static_cast<float>(horizon));
   result.evaluated_timesteps = static_cast<std::size_t>(horizon);
   return result;
+}
+
+std::string formatCostBreakdown(const CostBreakdown & cost)
+{
+  std::ostringstream stream;
+  stream << std::fixed << std::setprecision(2) << "{timesteps=" << cost.evaluated_timesteps
+         << ", total=" << cost.total << ", running=" << cost.running_total
+         << ", terminal=" << cost.terminal_total << ", speed=" << cost.speed
+         << ", track=" << cost.track << ", heading=" << cost.heading
+         << ", lateral_distance=" << cost.lateral_distance
+         << ", lateral_boundary=" << cost.lateral_boundary
+         << ", lateral_yaw=" << cost.lateral_yaw_error << ", remaining=" << cost.remaining_distance
+         << ", overshoot=" << cost.path_overshoot << ", track_center=" << cost.track_center
+         << ", corner=" << cost.corner_buffer << ", drivable=" << cost.drivable_area
+         << ", obstacle=" << cost.obstacle << ", road_border=" << cost.road_border
+         << ", accel_cmd=" << cost.acceleration_command << ", steer_cmd=" << cost.steering_command
+         << ", lateral_accel=" << cost.lateral_acceleration
+         << ", lateral_jerk=" << cost.lateral_jerk
+         << ", longitudinal_jerk=" << cost.longitudinal_jerk
+         << ", steer_rate=" << cost.steering_rate << '}';
+  return stream.str();
 }
 
 /** Expose vendor Savitzky–Golay control_history_ for offline retune parity. */
@@ -748,8 +776,8 @@ struct FirstOrderDubinsMppiInterface::Impl
       "acc_delay=%.3f (%d steps), steer_delay=%.3f (%d steps), "
       "steer_rate_lim=%.2f, vel_rate_lim=%.2f, ego=%.2fx%.2f, axle_to_center=%.2f, "
       "boundary_threshold=%.2f, obs_margin=%.2f, road_border_margin=%.2f, "
-      "obs_barrier=%.2f@%.2f, road_barrier=%.2f@%.2f, drive_barrier=%.2f@%.2f, "
-      "max_crash_penalty=%.2f)",
+      "lateral_barrier=%.2f@%.2f, obs_barrier=%.2f@%.2f, road_barrier=%.2f@%.2f, "
+      "drive_barrier=%.2f@%.2f, max_crash_penalty=%.2f)",
       kMppiHorizon, kNumRollouts, kDt, user_cost_params_.lambda, vehicle_params.wheel_base,
       vehicle_params.max_steer_angle, user_cost_params_.accel_cmd_std_dev,
       user_cost_params_.steer_cmd_std_dev, vehicle_params.acc_time_constant,
@@ -758,6 +786,7 @@ struct FirstOrderDubinsMppiInterface::Impl
       vehicle_params.vel_rate_lim, vehicle_params.ego_length, vehicle_params.ego_width,
       vehicle_params.ego_axle_to_box_center, cost_params.boundary_threshold,
       cost_params.obstacle_collision_margin, cost_params.road_border_collision_margin,
+      cost_params.lateral_boundary_barrier_weight, cost_params.lateral_boundary_soft_margin,
       cost_params.obstacle_barrier_weight, cost_params.obstacle_safe_margin,
       cost_params.road_border_barrier_weight, cost_params.road_border_safe_margin,
       cost_params.drivable_area_barrier_weight, cost_params.drivable_area_safe_margin,
@@ -1652,6 +1681,9 @@ FirstOrderDubinsMppiOptimizationResult FirstOrderDubinsMppiInterface::optimizeTr
   result.debug.nominal_trajectory = buildNominalTrajectory(
     impl_->model, x_at_optimization, input, impl_->logged_nominal_accel,
     impl_->logged_nominal_steer);
+  result.debug.nominal_control_profile.time_step_s = kDt;
+  result.debug.nominal_control_profile.acceleration_commands_mps2 = impl_->logged_nominal_accel;
+  result.debug.nominal_control_profile.steering_commands_rad = impl_->logged_nominal_steer;
   result.debug.validation = validation;
   if (impl_->enable_rollout_visualization) {
     buildRolloutVisualization(
@@ -1696,17 +1728,18 @@ FirstOrderDubinsMppiOptimizationResult FirstOrderDubinsMppiInterface::optimizeTr
     impl_->logged_applied_steer);
 
   const auto validation_reasons = to_string(result.debug.validation.reasons);
+  const auto cost_breakdown = formatCostBreakdown(result.debug.cost_breakdown);
   RCLCPP_INFO(
     mppiLogger(),
     "MPPI tracked diffusion ref in %.1f ms: start_idx=%zu steps=%d output points size=%zu "
     "points=%zu rollouts=%zu "
     "obstacles=%zu road_borders=%zu drivable_segments=%zu u_accel=%.3f u_steer=%.3f "
-    "baseline_cost=%.2f host_output_cost=%.2f crash_status=%s max_pos_err=%.3f m "
+    "best_sample_cost=%.2f selected_cost=%s validity=%s max_pos_err=%.3f m "
     "max_vel_err=%.3f m/s",
     elapsed_ms, impl_->tracking_start_idx, impl_->step_count, output.points.size(), num_points,
     result.debug.rollouts.size(), tracked_objects.objects.size(), road_borders.size(),
     drivable_area.size(), control.accel_cmd, control.steer_cmd, result.debug.baseline_cost,
-    result.debug.cost_breakdown.total, validation_reasons.c_str(), max_pos_delta, max_vel_delta);
+    cost_breakdown.c_str(), validation_reasons.c_str(), max_pos_delta, max_vel_delta);
 
   if (impl_->skip_if_invalid && !validation.isValid()) {
     result.trajectory = input;

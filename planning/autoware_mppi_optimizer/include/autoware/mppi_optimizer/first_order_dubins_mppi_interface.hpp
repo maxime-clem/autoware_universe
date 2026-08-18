@@ -77,6 +77,7 @@ struct FirstOrderDubinsMppiCostBreakdown
   float track{0.0F};
   float heading{0.0F};
   float lateral_distance{0.0F};
+  float lateral_boundary{0.0F};
   float lateral_yaw_error{0.0F};
   float remaining_distance{0.0F};
   float path_overshoot{0.0F};
@@ -98,10 +99,10 @@ struct FirstOrderDubinsMppiCostBreakdown
 
   [[nodiscard]] float componentTotal() const
   {
-    return speed + track + heading + lateral_distance + lateral_yaw_error + remaining_distance +
-           path_overshoot + track_center + corner_buffer + drivable_area + acceleration_command +
-           steering_command + lateral_acceleration + lateral_jerk + longitudinal_jerk +
-           steering_rate + obstacle + road_border;
+    return speed + track + heading + lateral_distance + lateral_boundary + lateral_yaw_error +
+           remaining_distance + path_overshoot + track_center + corner_buffer + drivable_area +
+           acceleration_command + steering_command + lateral_acceleration + lateral_jerk +
+           longitudinal_jerk + steering_rate + obstacle + road_border;
   }
 };
 

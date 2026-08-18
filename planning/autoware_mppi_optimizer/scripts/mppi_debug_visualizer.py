@@ -1723,6 +1723,7 @@ def draw_frame(axes, frame: MppiDebugFrame) -> None:
             ("state/track", "track"),
             ("state/heading", "heading"),
             ("state/lateral_distance", "lat distance"),
+            ("state/lateral_boundary", "lat boundary"),
             ("state/lateral_yaw_error", "lat yaw error"),
             ("state/remaining_distance", "remaining dist"),
             ("state/path_overshoot", "path overshoot"),

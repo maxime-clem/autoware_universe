@@ -61,10 +61,6 @@ struct FirstOrderDubinsMppiCostParams
   float drivable_area_safe_margin{0.0F};
   float drivable_area_barrier_weight{2000.0F};
   float max_crash_penalty{100000.0F};
-  float goal_pos_coeff{1000.0F};
-  float goal_speed_coeff{0.0F};
-  float goal_yaw_coeff{500.0F};
-  float goal_terminal_scale{10.0F};
 };
 
 }  // namespace autoware::mppi_optimizer
