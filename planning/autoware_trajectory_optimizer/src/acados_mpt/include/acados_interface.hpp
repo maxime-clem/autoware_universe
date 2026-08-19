@@ -16,6 +16,7 @@
 
 #include <array>
 #include <cstddef>
+#include <iosfwd>
 #include <string>
 
 #ifdef MAX_ITER
@@ -58,14 +59,24 @@ public:
   AcadosSolution getControl(std::array<double, NX> x0);
   void setParameters(int stage, std::array<double, NP> params);
   void setParametersAllStages(std::array<double, NP> params);
+  /// World-frame stage yref ``[x,y,psi,v,a,δ,a_cmd,δ_cmd]`` → path-frame via ``Vx``.
   void setStageReference(int stage, std::array<double, NY> yref);
+  /// Terminal ``[x,y,psi,v,a,δ]`` → path-frame via ``Vx``.
   void setTerminalReference(std::array<double, NYN> yref_e);
+  /// Set ``|steer_rate|`` bound on nonlinear constraint h for all stages.
+  void setSteerRateLimit(double max_steer_rate_rad_s);
+  /// Fill NLP init with a constant (x0, u0) on every stage (cold / fallback).
   void setWarmStart(std::array<double, NX> x0, std::array<double, NU> u0);
+  /// Fill NLP init with a full shifted previous solution (preferred online warm-start).
+  void setWarmStartTrajectory(
+    const std::array<std::array<double, NX>, N + 1> & xtraj,
+    const std::array<std::array<double, NU>, N> & utraj);
   void setInitialState(std::array<double, NX> x0);
 
 private:
   std::array<std::array<double, NX>, N + 1> getStateTrajectory() const;
   std::array<std::array<double, NU>, N> getControlTrajectory() const;
+  void appendInequalityLambdaReport(std::ostream & ss) const;
 
   kinematic_bicycle_temporal_solver_capsule * capsule_;
   ocp_nlp_config * nlp_config_;

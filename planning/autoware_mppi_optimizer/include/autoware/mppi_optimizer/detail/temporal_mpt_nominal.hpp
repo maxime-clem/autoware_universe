@@ -27,6 +27,9 @@ namespace autoware::mppi_optimizer::detail
 /**
  * Owns a temporal_mpt::PathTrackingSolver and converts its u-trajectory into MPPI nominal
  * controls (accel_cmd, steer_cmd). Falls back to nullopt when the solve fails.
+ *
+ * Plant matches FirstOrderDubinsBicycle continuous dynamics (lag + rate limit), without
+ * input-delay FIFOs.
  */
 class TemporalMptNominalSeeder
 {
@@ -39,8 +42,23 @@ public:
   TemporalMptNominalSeeder(TemporalMptNominalSeeder &&) noexcept;
   TemporalMptNominalSeeder & operator=(TemporalMptNominalSeeder &&) noexcept;
 
-  /** Update bicycle lf/lr from ego wheel base (split evenly). */
-  void setWheelBase(float wheel_base_m);
+  /**
+   * ``L = lf + lr`` with ``lr = rear_axle_to_cg``, ``lf = wheel_base - lr``.
+   * Actuator lags / rate limit match MPPI vehicle params.
+   */
+  void setBicycleParameters(
+    float wheel_base_m, float rear_axle_to_cg_m, float accel_time_constant_s,
+    float steer_time_constant_s, float max_steer_rate_rad_s);
+
+  /** Drop stored t-MPT warm-start (call after stop / tracking reset). */
+  void resetWarmStart();
+
+  /**
+   * Seed the next t-MPT NLP from a prior control sequence (e.g. shifted last MPPI u_opt).
+   * Consumed on the next ``solve``.
+   */
+  void setWarmStartControls(
+    const std::vector<float> & accel_cmd, const std::vector<float> & steer_cmd);
 
   [[nodiscard]] std::optional<std::vector<FirstOrderDubinsMppiControl>> solve(
     const Trajectory & reference, const InitialState & ego,

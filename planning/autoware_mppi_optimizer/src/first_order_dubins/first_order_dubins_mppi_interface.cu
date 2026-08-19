@@ -650,6 +650,7 @@ struct FirstOrderDubinsMppiInterface::Impl
   size_t tracking_start_idx{0U};
   float sim_time{0.0F};
   bool ignore_obstacles{false};
+  bool ignore_road_borders{false};
   bool ignore_drivable_area{false};
   bool force_cold_start_each_step{false};
   bool skip_if_invalid{false};
@@ -715,7 +716,10 @@ struct FirstOrderDubinsMppiInterface::Impl
     dyn.min_accel = vehicle_params.min_accel();
     dyn.max_accel = vehicle_params.max_accel();
     model.setParams(dyn);
-    temporal_mpt_nominal_seeder.setWheelBase(vehicle_params.wheel_base);
+    temporal_mpt_nominal_seeder.setBicycleParameters(
+      vehicle_params.wheel_base, vehicle_params.ego_axle_to_box_center,
+      vehicle_params.acc_time_constant, vehicle_params.steer_time_constant,
+      vehicle_params.steer_rate_lim);
 
     acc_delay_steps = enable_input_delay_compensation
                         ? sampledDelaySteps(0.0F, vehicle_params.acc_time_delay, kDt)
@@ -820,6 +824,7 @@ struct FirstOrderDubinsMppiInterface::Impl
     accel_delay_buffer.clear();
     steer_delay_buffer.clear();
     delay_buffer_seeded = false;
+    temporal_mpt_nominal_seeder.resetWarmStart();
   }
 
   void syncDelayStepsToModel()
@@ -1098,13 +1103,34 @@ struct FirstOrderDubinsMppiInterface::Impl
     // Also reseed when departing from a stop: shifted last u_opt is usually near-zero / braking.
     constexpr float kStoppedVelocityMps = 0.05F;
     const bool started_from_stop = std::abs(ego.velocity) < kStoppedVelocityMps;
-    if (use_last_control_as_nominal && step_count > 0 && !started_from_stop) {
-      seedNominalControlFromLastOptimized();
+    const bool have_last_u = use_last_control_as_nominal && step_count > 0 && !started_from_stop;
+
+    if (use_temporal_mpt_as_nominal) {
+      // t-MPT always runs when enabled. Optionally seed its NLP from shifted last MPPI u_opt;
+      // otherwise PathTrackingSolver warm-starts from its own previous solution.
+      if (have_last_u) {
+        const int accel_idx =
+          static_cast<int>(FirstOrderDubinsBicycleParams::ControlIndex::ACCELERATION_CMD);
+        const int steer_idx =
+          static_cast<int>(FirstOrderDubinsBicycleParams::ControlIndex::STEER_CMD);
+        std::vector<float> accel(static_cast<size_t>(kMppiHorizon));
+        std::vector<float> steer(static_cast<size_t>(kMppiHorizon));
+        for (int t = 0; t < kMppiHorizon - 1; ++t) {
+          accel[static_cast<size_t>(t)] = u_opt(accel_idx, t + 1);
+          steer[static_cast<size_t>(t)] = u_opt(steer_idx, t + 1);
+        }
+        accel[static_cast<size_t>(kMppiHorizon - 1)] = u_opt(accel_idx, kMppiHorizon - 1);
+        steer[static_cast<size_t>(kMppiHorizon - 1)] = u_opt(steer_idx, kMppiHorizon - 1);
+        temporal_mpt_nominal_seeder.setWarmStartControls(accel, steer);
+      } else if (started_from_stop || step_count == 0) {
+        temporal_mpt_nominal_seeder.resetWarmStart();
+      }
+      seedNominalControlFromTemporalMpt(reference, ego);
       snapshotNominalForLog();
       return;
     }
-    if (use_temporal_mpt_as_nominal) {
-      seedNominalControlFromTemporalMpt(reference, ego);
+    if (have_last_u) {
+      seedNominalControlFromLastOptimized();
       snapshotNominalForLog();
       return;
     }
@@ -1130,8 +1156,8 @@ struct FirstOrderDubinsMppiInterface::Impl
     diffusion_reference = reference;
     diffusion_reference_chord_length_s = detail::computeCumulativeChordLength(diffusion_reference);
     tracked_objects = ignore_obstacles ? TrackedObjects{} : tracked_objects_in;
-    road_borders = road_borders_in;
-    drivable_area = drivable_area_in;
+    road_borders = ignore_road_borders ? std::vector<Segment>() : road_borders_in;
+    drivable_area = ignore_drivable_area ? std::vector<Segment>() : drivable_area_in;
     if (road_borders.size() > static_cast<size_t>(COST::kMaxRoadBorderSegments)) {
       RCLCPP_WARN(
         mppiLogger(), "Road-border segment count %zu exceeds GPU capacity %d; truncating",
@@ -1381,8 +1407,9 @@ void FirstOrderDubinsMppiInterface::setRuntimeOptions(
   setDebugTrajectoryLogging(
     options.enable_debug_trajectory_log, options.debug_trajectory_log_directory);
   setAblationOptions(
-    options.ignore_obstacles, options.ignore_drivable_area, options.force_cold_start_each_step,
-    options.skip_if_invalid, options.use_last_control_as_nominal);
+    options.ignore_obstacles, options.ignore_road_borders, options.ignore_drivable_area,
+    options.force_cold_start_each_step, options.skip_if_invalid,
+    options.use_last_control_as_nominal);
   if (!impl_) {
     throw std::runtime_error("FirstOrderDubinsMppiInterface implementation is missing");
   }
@@ -1415,7 +1442,7 @@ void FirstOrderDubinsMppiInterface::setDebugTrajectoryLogging(
 }
 
 void FirstOrderDubinsMppiInterface::setAblationOptions(
-  const bool ignore_obstacles, const bool ignore_drivable_area,
+  const bool ignore_obstacles, const bool ignore_road_borders, const bool ignore_drivable_area,
   const bool force_cold_start_each_step, const bool skip_if_invalid,
   const bool use_last_control_as_nominal)
 {
@@ -1423,19 +1450,21 @@ void FirstOrderDubinsMppiInterface::setAblationOptions(
     throw std::runtime_error("FirstOrderDubinsMppiInterface implementation is missing");
   }
   impl_->ignore_obstacles = ignore_obstacles;
+  impl_->ignore_road_borders = ignore_road_borders;
   impl_->ignore_drivable_area = ignore_drivable_area;
   impl_->force_cold_start_each_step = force_cold_start_each_step;
   impl_->skip_if_invalid = skip_if_invalid;
   impl_->use_last_control_as_nominal = use_last_control_as_nominal;
   RCLCPP_INFO(
     mppiLogger(),
-    "MPPI ablation options: ignore_obstacles=%s ignore_drivable_area=%s "
+    "MPPI ablation options: ignore_obstacles=%s ignore_road_borders=%s ignore_drivable_area=%s "
     "force_cold_start_each_step=%s skip_if_invalid=%s use_last_control_as_nominal=%s",
-    ignore_obstacles ? "true" : "false", ignore_drivable_area ? "true" : "false",
-    force_cold_start_each_step ? "true" : "false", skip_if_invalid ? "true" : "false",
-    use_last_control_as_nominal ? "true" : "false");
+    ignore_obstacles ? "true" : "false", ignore_road_borders ? "true" : "false",
+    ignore_drivable_area ? "true" : "false", force_cold_start_each_step ? "true" : "false",
+    skip_if_invalid ? "true" : "false", use_last_control_as_nominal ? "true" : "false");
   FirstOrderDubinsMppiRuntimeOptions runtime{};
   runtime.ignore_obstacles = ignore_obstacles;
+  runtime.ignore_road_borders = ignore_road_borders;
   runtime.ignore_drivable_area = ignore_drivable_area;
   runtime.force_cold_start_each_step = force_cold_start_each_step;
   runtime.skip_if_invalid = skip_if_invalid;
@@ -1740,6 +1769,7 @@ FirstOrderDubinsMppiOptimizationResult FirstOrderDubinsMppiInterface::optimizeTr
   {
     FirstOrderDubinsMppiRuntimeOptions runtime{};
     runtime.ignore_obstacles = impl_->ignore_obstacles;
+    runtime.ignore_road_borders = impl_->ignore_road_borders;
     runtime.ignore_drivable_area = impl_->ignore_drivable_area;
     runtime.force_cold_start_each_step = impl_->force_cold_start_each_step;
     runtime.skip_if_invalid = impl_->skip_if_invalid;
@@ -1750,12 +1780,12 @@ FirstOrderDubinsMppiOptimizationResult FirstOrderDubinsMppiInterface::optimizeTr
     impl_->debug_trajectory_logger.writeRuntimeOptionsOnce(runtime);
   }
   impl_->debug_trajectory_logger.logFrame(
-    result.debug.reference_trajectory, result.debug.optimized_trajectory, ego,
-    result.debug.baseline_cost, impl_->logged_nominal_accel, impl_->logged_nominal_steer,
-    road_borders, drivable_area, tracked_objects, impl_->logged_hist_accel_tm2,
-    impl_->logged_hist_steer_tm2, impl_->logged_hist_accel_tm1, impl_->logged_hist_steer_tm1,
-    impl_->logged_delay_accel, impl_->logged_delay_steer, impl_->logged_applied_accel,
-    impl_->logged_applied_steer);
+    result.debug.reference_trajectory, result.debug.optimized_trajectory,
+    result.debug.nominal_trajectory, ego, result.debug.baseline_cost, impl_->logged_nominal_accel,
+    impl_->logged_nominal_steer, road_borders, drivable_area, tracked_objects,
+    impl_->logged_hist_accel_tm2, impl_->logged_hist_steer_tm2, impl_->logged_hist_accel_tm1,
+    impl_->logged_hist_steer_tm1, impl_->logged_delay_accel, impl_->logged_delay_steer,
+    impl_->logged_applied_accel, impl_->logged_applied_steer);
 
   const auto validation_reasons = to_string(result.debug.validation.reasons);
   const auto cost_breakdown = formatCostBreakdown(result.debug.cost_breakdown);

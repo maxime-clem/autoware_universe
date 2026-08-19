@@ -15,7 +15,6 @@
 import types
 
 from casadi import SX
-from casadi import atan
 from casadi import cos
 from casadi import sin
 from casadi import tan
@@ -23,12 +22,18 @@ from casadi import vertcat
 
 
 def bicycle_model_temporal():
-    """Define a kinematic bicycle in time.
+    """First-order Dubins bicycle matching MPPI (without input-delay FIFOs).
 
-    States: x, y, psi, v (world pose and speed).
-    Controls: a (longitudinal acceleration), delta (front steering angle [rad]).
-    Steering is applied directly in the bicycle kinematics (no steering lag state).
-    Parameters: lf, lr (wheelbase split).
+    Same continuous plant as ``FirstOrderDubinsBicycle``:
+      a_dot     = (a_cmd - a) / tau_a
+      delta_dot = (delta_cmd - delta) / tau_d   (|delta_dot| <= max_steer_rate via h)
+      v_dot     = a
+      psi_dot   = (v / L) * tan(delta)
+      x_dot,y_dot = v * [cos(psi), sin(psi)]
+
+    States: x, y, psi, v, a, delta
+    Controls: a_cmd, delta_cmd
+    Parameters: lf, lr, tau_a, tau_d  with L = lf + lr (= wheel_base).
     """
     constraint = types.SimpleNamespace()
     model = types.SimpleNamespace()
@@ -39,49 +44,57 @@ def bicycle_model_temporal():
     y_pos = SX.sym("y")
     psi = SX.sym("psi")
     v = SX.sym("v")
-
-    x = vertcat(x_pos, y_pos, psi, v)
+    a = SX.sym("a")
+    delta = SX.sym("delta")
+    x = vertcat(x_pos, y_pos, psi, v, a, delta)
 
     lf = SX.sym("lf")
     lr = SX.sym("lr")
+    tau_a = SX.sym("tau_a")
+    tau_d = SX.sym("tau_d")
+    p = vertcat(lf, lr, tau_a, tau_d)
 
-    p = vertcat(lf, lr)
-
-    a_long = SX.sym("a")
-    delta = SX.sym("delta")
-    u = vertcat(a_long, delta)
+    a_cmd = SX.sym("a_cmd")
+    delta_cmd = SX.sym("delta_cmd")
+    u = vertcat(a_cmd, delta_cmd)
 
     xdot_sym = SX.sym("xdot")
     ydot_sym = SX.sym("ydot")
     psidot_sym = SX.sym("psidot")
     vdot_sym = SX.sym("vdot")
-    xdot = vertcat(xdot_sym, ydot_sym, psidot_sym, vdot_sym)
+    adot_sym = SX.sym("adot")
+    deltadot_sym = SX.sym("deltadot")
+    xdot = vertcat(xdot_sym, ydot_sym, psidot_sym, vdot_sym, adot_sym, deltadot_sym)
 
     L = lf + lr
-    beta_slip = atan(lr * tan(delta) / L)
-    # Curvature-like term from yaw rate: psi_dot = v * K  =>  a_lat = v * psi_dot = v^2 * K
-    K = cos(beta_slip) * tan(delta) / L
-    a_lat = v * v * K
+    x_dot = v * cos(psi)
+    y_dot = v * sin(psi)
+    psi_dot = (v / L) * tan(delta)
+    v_dot = a
+    a_dot = (a_cmd - a) / tau_a
+    delta_dot = (delta_cmd - delta) / tau_d
 
-    x_dot = v * cos(psi + beta_slip)
-    y_dot = v * sin(psi + beta_slip)
-    psi_dot = v * cos(beta_slip) * tan(delta) / L
-    v_dot = a_long
+    f_expl = vertcat(x_dot, y_dot, psi_dot, v_dot, a_dot, delta_dot)
 
-    f_expl = vertcat(x_dot, y_dot, psi_dot, v_dot)
-
-    model.con_h_expr = vertcat(a_lat)
+    # Steer-rate residual: |(delta_cmd - delta)/tau_d| <= max_steer_rate
+    # Intermediate stages use con_h_expr; stage 0 needs con_h_expr_0 (acados nh vs nh_0).
+    steer_rate = (delta_cmd - delta) / tau_d
+    model.con_h_expr = vertcat(steer_rate)
+    model.con_h_expr_0 = vertcat(steer_rate)
 
     model.a_min = -3.5
     model.a_max = 3.5
-    model.delta_cmd_min = -0.7
-    model.delta_cmd_max = 0.7
     model.delta_min = -0.7
     model.delta_max = 0.7
+    model.delta_cmd_min = -0.7
+    model.delta_cmd_max = 0.7
+    model.max_steer_rate = 3.0
 
     params = types.SimpleNamespace()
     params.lf = lf
     params.lr = lr
+    params.tau_a = tau_a
+    params.tau_d = tau_d
     model.f_impl_expr = xdot - f_expl
     model.f_expl_expr = f_expl
     model.x = x

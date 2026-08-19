@@ -76,6 +76,7 @@ struct MppiDebugEgoState
  *   <log_dir>/000000_optimized.csv
  *   <log_dir>/000000_ego.csv
  *   <log_dir>/000000_nominal.csv          (u_nom warm-start accel/steer cmds)
+ *   <log_dir>/000000_nominal_traj.csv     (open-loop XY of u_nom = RViz mppi_nominal)
  *   <log_dir>/000000_road_borders.csv
  *   <log_dir>/000000_drivable.csv
  *   <log_dir>/000000_objects.csv
@@ -185,6 +186,15 @@ public:
         out << "ego_width," << vehicle.ego_width << "\n";
         out << "ego_axle_to_box_center," << vehicle.ego_axle_to_box_center << "\n";
         out << "wheel_base," << vehicle.wheel_base << "\n";
+        // First-order Dubins L=lf+lr and lags used by TemporalMptNominalSeeder.
+        {
+          const float wb = std::max(vehicle.wheel_base, 1.0e-3F);
+          float lr = vehicle.ego_axle_to_box_center;
+          lr = std::min(std::max(lr, 1.0e-3F), wb - 1.0e-3F);
+          const float lf = wb - lr;
+          out << "lf," << lf << "\n";
+          out << "lr," << lr << "\n";
+        }
         out << "max_steer_angle," << vehicle.max_steer_angle << "\n";
         out << "acc_time_constant," << vehicle.acc_time_constant << "\n";
         out << "steer_time_constant," << vehicle.steer_time_constant << "\n";
@@ -206,6 +216,7 @@ public:
     if (out) {
       out << "key,value\n";
       out << "ignore_obstacles," << (options.ignore_obstacles ? 1 : 0) << "\n";
+      out << "ignore_road_borders," << (options.ignore_road_borders ? 1 : 0) << "\n";
       out << "ignore_drivable_area," << (options.ignore_drivable_area ? 1 : 0) << "\n";
       out << "force_cold_start_each_step," << (options.force_cold_start_each_step ? 1 : 0) << "\n";
       out << "skip_if_invalid," << (options.skip_if_invalid ? 1 : 0) << "\n";
@@ -222,10 +233,11 @@ public:
 
   void logFrame(
     const autoware_planning_msgs::msg::Trajectory & reference,
-    const autoware_planning_msgs::msg::Trajectory & optimized, const MppiDebugEgoState & ego,
-    const double baseline_cost, const std::vector<float> & nominal_accel_cmd,
-    const std::vector<float> & nominal_steer_cmd, const std::vector<Segment> & road_borders,
-    const std::vector<Segment> & drivable_area,
+    const autoware_planning_msgs::msg::Trajectory & optimized,
+    const autoware_planning_msgs::msg::Trajectory & nominal_trajectory,
+    const MppiDebugEgoState & ego, const double baseline_cost,
+    const std::vector<float> & nominal_accel_cmd, const std::vector<float> & nominal_steer_cmd,
+    const std::vector<Segment> & road_borders, const std::vector<Segment> & drivable_area,
     const autoware_perception_msgs::msg::TrackedObjects & tracked_objects,
     const float hist_accel_tm2, const float hist_steer_tm2, const float hist_accel_tm1,
     const float hist_steer_tm1, const std::vector<float> & delay_accel_cmd,
@@ -242,10 +254,16 @@ public:
     const std::string opt_path = directory_ + "/" + frame_tag + "_optimized.csv";
     const std::string ego_path = directory_ + "/" + frame_tag + "_ego.csv";
     const std::string nominal_path = directory_ + "/" + frame_tag + "_nominal.csv";
+    const std::string nominal_traj_path = directory_ + "/" + frame_tag + "_nominal_traj.csv";
     if (
       !writeTrajectoryCsv(ref_path, reference) || !writeTrajectoryCsv(opt_path, optimized) ||
       !writeEgoCsv(ego_path, ego)) {
       return;
+    }
+    if (!nominal_trajectory.points.empty()) {
+      if (!writeTrajectoryCsv(nominal_traj_path, nominal_trajectory)) {
+        return;
+      }
     }
     if (!nominal_accel_cmd.empty() || !nominal_steer_cmd.empty()) {
       if (!writeNominalCsv(nominal_path, nominal_accel_cmd, nominal_steer_cmd)) {

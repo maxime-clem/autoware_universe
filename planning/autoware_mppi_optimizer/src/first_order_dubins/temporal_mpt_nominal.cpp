@@ -49,10 +49,31 @@ TemporalMptNominalSeeder::TemporalMptNominalSeeder(TemporalMptNominalSeeder &&) 
 TemporalMptNominalSeeder & TemporalMptNominalSeeder::operator=(
   TemporalMptNominalSeeder &&) noexcept = default;
 
-void TemporalMptNominalSeeder::setWheelBase(const float wheel_base_m)
+void TemporalMptNominalSeeder::setBicycleParameters(
+  const float wheel_base_m, const float rear_axle_to_cg_m, const float accel_time_constant_s,
+  const float steer_time_constant_s, const float max_steer_rate_rad_s)
 {
-  const double half = 0.5 * static_cast<double>(std::max(wheel_base_m, 1.0e-3F));
-  impl_->solver.setModelParameters(half, half);
+  const double wb = static_cast<double>(std::max(wheel_base_m, 1.0e-3F));
+  double lr = static_cast<double>(rear_axle_to_cg_m);
+  lr = std::clamp(lr, 1.0e-3, wb - 1.0e-3);
+  const double lf = wb - lr;
+  impl_->solver.setModelParameters(
+    lf, lr, static_cast<double>(std::max(accel_time_constant_s, 1.0e-4F)),
+    static_cast<double>(std::max(steer_time_constant_s, 1.0e-4F)),
+    static_cast<double>(std::max(max_steer_rate_rad_s, 1.0e-6F)));
+}
+
+void TemporalMptNominalSeeder::resetWarmStart()
+{
+  impl_->solver.resetWarmStart();
+}
+
+void TemporalMptNominalSeeder::setWarmStartControls(
+  const std::vector<float> & accel_cmd, const std::vector<float> & steer_cmd)
+{
+  std::vector<double> a(accel_cmd.begin(), accel_cmd.end());
+  std::vector<double> d(steer_cmd.begin(), steer_cmd.end());
+  impl_->solver.setWarmStartControls(a, d);
 }
 
 std::optional<std::vector<FirstOrderDubinsMppiControl>> TemporalMptNominalSeeder::solve(
@@ -61,6 +82,11 @@ std::optional<std::vector<FirstOrderDubinsMppiControl>> TemporalMptNominalSeeder
 {
   if (reference.points.size() < 2U || horizon <= 0) {
     return std::nullopt;
+  }
+
+  constexpr float kStoppedVelocityMps = 0.05F;
+  if (std::abs(ego.velocity) < kStoppedVelocityMps) {
+    impl_->solver.resetWarmStart();
   }
 
   temporal_mpt::PathTrackingReference mpt_ref;
@@ -80,6 +106,8 @@ std::optional<std::vector<FirstOrderDubinsMppiControl>> TemporalMptNominalSeeder
   x0.y = ego.y;
   x0.yaw = ego.yaw;
   x0.v = std::max(0.0, static_cast<double>(ego.velocity));
+  x0.accel = static_cast<double>(ego.acceleration);
+  x0.steer = static_cast<double>(ego.steering);
 
   const temporal_mpt::PathTrackingResult mpt = impl_->solver.solve(x0, mpt_ref);
   if (!mpt.ok || mpt.accel_cmd.empty() || mpt.steer_cmd.size() != mpt.accel_cmd.size()) {

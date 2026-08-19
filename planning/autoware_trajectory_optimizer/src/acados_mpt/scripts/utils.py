@@ -24,7 +24,8 @@ import sys
 import matplotlib.pyplot as plt
 import numpy as np
 
-NY_STAGE_DEFAULT = 6
+NY_STAGE_DEFAULT = 8  # [x,y,psi,v,a,delta, a_cmd, delta_cmd]
+NX_DEFAULT = 6  # [x,y,psi,v,a,delta]
 
 
 def _ensure_acados_template_on_path() -> None:
@@ -81,7 +82,7 @@ def build_yref_row(
     j: int,
     psi_bias: float = 0.0,
 ) -> np.ndarray:
-    """Return one LINEAR_LS stage reference row (state + inputs) at index ``j``."""
+    """Stage yref ``[x,y,psi,v,a,δ,a_cmd,δ_cmd]`` (world); actuator refs are 0."""
     return np.array(
         [
             x_r[j],
@@ -90,8 +91,83 @@ def build_yref_row(
             v_r[j],
             0.0,
             0.0,
+            0.0,
+            0.0,
         ]
     )
+
+
+def path_frame_vx_stage(psi: float) -> np.ndarray:
+    """``Vx`` (ny=8, nx=6): path-frame lon/lat + identity on psi,v,a,delta."""
+    c = float(np.cos(psi))
+    s = float(np.sin(psi))
+    vx = np.zeros((8, 6))
+    vx[0, 0] = c
+    vx[0, 1] = s
+    vx[1, 0] = -s
+    vx[1, 1] = c
+    vx[2, 2] = 1.0
+    vx[3, 3] = 1.0
+    vx[4, 4] = 1.0
+    vx[5, 5] = 1.0
+    return vx
+
+
+def path_frame_vx_terminal(psi: float) -> np.ndarray:
+    """``Vx`` (ny=6, nx=6) terminal path-frame."""
+    c = float(np.cos(psi))
+    s = float(np.sin(psi))
+    vx = np.zeros((6, 6))
+    vx[0, 0] = c
+    vx[0, 1] = s
+    vx[1, 0] = -s
+    vx[1, 1] = c
+    vx[2, 2] = 1.0
+    vx[3, 3] = 1.0
+    vx[4, 4] = 1.0
+    vx[5, 5] = 1.0
+    return vx
+
+
+def path_frame_yref_stage(yref_world: np.ndarray) -> np.ndarray:
+    """World stage yref → path-frame residual target."""
+    xr = float(yref_world[0])
+    yr = float(yref_world[1])
+    psi = float(yref_world[2])
+    c = float(np.cos(psi))
+    s = float(np.sin(psi))
+    out = np.array(yref_world, dtype=float, copy=True)
+    out[0] = c * xr + s * yr
+    out[1] = -s * xr + c * yr
+    return out
+
+
+def path_frame_yref_terminal(yref_world: np.ndarray) -> np.ndarray:
+    """World terminal ``[x,y,psi,v,a,δ]`` → path-frame."""
+    xr = float(yref_world[0])
+    yr = float(yref_world[1])
+    psi = float(yref_world[2])
+    c = float(np.cos(psi))
+    s = float(np.sin(psi))
+    out = np.array(yref_world, dtype=float, copy=True)
+    out[0] = c * xr + s * yr
+    out[1] = -s * xr + c * yr
+    return out
+
+
+def apply_path_frame_stage(solver, stage: int, yref_world: np.ndarray) -> None:
+    """Set stage ``Vx`` + ``yref`` so the first two residuals are along/cross-track errors."""
+    psi = float(yref_world[2])
+    # api='new': pass mathematical (ny×nx) layout; acados_template handles column-major.
+    solver.cost_set(stage, "Vx", path_frame_vx_stage(psi), api="new")
+    solver.set(stage, "yref", path_frame_yref_stage(yref_world))
+
+
+def apply_path_frame_terminal(solver, n_horizon: int, yref_world: np.ndarray) -> None:
+    """Set terminal ``Vx`` + ``yref`` in the path frame."""
+    psi = float(yref_world[2])
+    solver.cost_set(n_horizon, "Vx", path_frame_vx_terminal(psi), api="new")
+    solver.set(n_horizon, "yref", path_frame_yref_terminal(yref_world))
 
 
 def run_closed_loop_mpc(
@@ -130,6 +206,8 @@ def run_closed_loop_mpc(
                         float(sim_x[m, 1]),
                         float(sim_x[m, 2]),
                         float(sim_x[m, 3]),
+                        float(sim_x[m, 4]) if sim_x.shape[1] > 4 else 0.0,
+                        float(sim_x[m, 5]) if sim_x.shape[1] > 5 else 0.0,
                         0.0,
                         0.0,
                     ]
@@ -140,7 +218,7 @@ def run_closed_loop_mpc(
                 j = len(x_r) - 1
             yref[k, :] = build_yref_row(x_r, y_r, v_r, psi_r, j, psi_bias=psi_bias)
         j_e = min(m + N, len(x_r) - 1)
-        yref_e = np.array([x_r[j_e], y_r[j_e], psi_r[j_e] + psi_bias, v_r[j_e]])
+        yref_e = np.array([x_r[j_e], y_r[j_e], psi_r[j_e] + psi_bias, v_r[j_e], 0.0, 0.0])
 
         x_off = float(sim_x[m, 0])
         y_off = float(sim_x[m, 1])
@@ -150,9 +228,9 @@ def run_closed_loop_mpc(
         solver.set(0, "lbx", x_stage)
         solver.set(0, "ubx", x_stage)
         for i in range(N):
-            solver.set(i, "yref", yref[i])
+            apply_path_frame_stage(solver, i, yref[i])
             solver.set(i, "p", p_vec)
-        solver.set(N, "yref", yref_e)
+        apply_path_frame_terminal(solver, N, yref_e)
         solver.set(N, "p", p_vec)
 
         last_status = solver.solve()
@@ -184,6 +262,110 @@ def solve_open_loop_mpc(
     return solve_autoware_temporal_mpc(solver, N, x0, x_r, y_r, psi_r, v_r, p_vec, ny_stage)
 
 
+# Control box bounds baked into path_tracking_mpc_temporal codegen (see bicycle_model_temporal).
+_A_MIN, _A_MAX = -3.5, 3.5
+_DELTA_MIN, _DELTA_MAX = -0.7, 0.7
+
+
+def print_acados_solve_report(
+    solver,
+    n_horizon: int,
+    status: int,
+    sol_u: np.ndarray,
+    *,
+    lam_tol: float = 1e-4,
+    max_active_list: int = 24,
+) -> None:
+    """Print solver status, control range, and inequality multipliers (stdout).
+
+    This OCP has **NH=0** (no nonlinear ``h`` / a_lat inequality). Inequalities are only:
+      stages 0..N-1: ``lbu/ubu`` on ``(a, δ)``
+      stage 0:       ``lbx/ubx`` fixing ``x0`` (equality via equal bounds)
+
+    acados ``lam`` order per stage: ``[lbu, lbx, lg, lh, …, ubu, ubx, ug, uh, …]``.
+    """
+    lines: list[str] = []
+    try:
+        sqp_iter = int(solver.get_stats("sqp_iter"))
+    except Exception:  # noqa: BLE001
+        sqp_iter = -1
+    try:
+        time_tot = float(solver.get_stats("time_tot"))
+    except Exception:  # noqa: BLE001
+        time_tot = float("nan")
+    kkt = float("nan")
+    try:
+        res = solver.get_stats("residuals")
+        if res is not None and len(res) > 0:
+            kkt = float(res[0])
+    except Exception:  # noqa: BLE001
+        pass
+
+    a = np.asarray(sol_u[:, 0], dtype=float)
+    d = np.asarray(sol_u[:, 1], dtype=float)
+    lines.append(
+        f"[acados] status={status} sqp_iter={sqp_iter} time={time_tot * 1e3:.2f}ms "
+        f"kkt~{kkt:.3e}"
+    )
+    lines.append(
+        f"[acados] u: a∈[{a.min():+.3f},{a.max():+.3f}] (bounds [{_A_MIN},{_A_MAX}])  "
+        f"δ∈[{d.min():+.3f},{d.max():+.3f}] (bounds [{_DELTA_MIN},{_DELTA_MAX}])"
+    )
+    lines.append(
+        "[acados] inequalities: u-box (a,δ) only — NH=0 (no a_lat / nonlinear h in this OCP)"
+    )
+
+    # Per-bound activity over stages 0..N-1
+    names = ("a_lo", "δ_lo", "a_hi", "δ_hi")
+    active_stages: dict[str, list[tuple[int, float]]] = {n: [] for n in names}
+    max_lam = {n: 0.0 for n in names}
+
+    for k in range(n_horizon):
+        lam = np.asarray(solver.get(k, "lam"), dtype=float).flatten()
+        # Stage 0 also has nbx0=4 between lbu and ubu.
+        if k == 0:
+            # [lbu(2), lbx(4), ubu(2), ubx(4)]
+            if lam.size < 8:
+                continue
+            lbu = lam[0:2]
+            ubu = lam[6:8]
+        else:
+            # [lbu(2), ubu(2)]
+            if lam.size < 4:
+                continue
+            lbu = lam[0:2]
+            ubu = lam[2:4]
+
+        vals = (float(lbu[0]), float(lbu[1]), float(ubu[0]), float(ubu[1]))
+        for name, val in zip(names, vals, strict=True):
+            max_lam[name] = max(max_lam[name], abs(val))
+            if abs(val) > lam_tol:
+                active_stages[name].append((k, val))
+
+    for name in names:
+        hits = active_stages[name]
+        lines.append(
+            f"[acados] λ {name}: active={len(hits)}/{n_horizon}  max|λ|={max_lam[name]:.4g}"
+        )
+        if hits:
+            show = hits[:max_active_list]
+            parts = [f"{k}:{v:+.3g}" for k, v in show]
+            more = "" if len(hits) <= max_active_list else f" …(+{len(hits) - max_active_list})"
+            lines.append(f"         stages {', '.join(parts)}{more}")
+
+    # Near-bound primal check (independent of λ scaling)
+    near_a_lo = int(np.sum(a <= _A_MIN + 1e-3))
+    near_a_hi = int(np.sum(a >= _A_MAX - 1e-3))
+    near_d_lo = int(np.sum(d <= _DELTA_MIN + 1e-3))
+    near_d_hi = int(np.sum(d >= _DELTA_MAX - 1e-3))
+    lines.append(
+        f"[acados] u within 1e-3 of bound: a_lo={near_a_lo} a_hi={near_a_hi} "
+        f"δ_lo={near_d_lo} δ_hi={near_d_hi}"
+    )
+
+    print("\n".join(lines), flush=True)
+
+
 def solve_autoware_temporal_mpc(
     solver,
     N: int,
@@ -194,6 +376,8 @@ def solve_autoware_temporal_mpc(
     v_pts: np.ndarray,
     p_vec: np.ndarray,
     ny_stage: int,
+    *,
+    log_acados: bool | None = None,
 ) -> tuple[np.ndarray, np.ndarray, int]:
     """Single-shot MPC matching ``TrajectoryTemporalMPTOptimizer`` (C++ plugin).
 
@@ -212,17 +396,31 @@ def solve_autoware_temporal_mpc(
         Same length ``n_pts`` (Autoware trajectory reference columns).
     x0
         Length-4 state ``[x, y, psi, v]`` (e.g. odometry), **map/world frame**.
+    log_acados
+        If True, print status / u / inequality λ to stdout. Default: env
+        ``TEMPORAL_MPT_LOG_ACADOS`` truthy, else False.
     """
+    if log_acados is None:
+        log_acados = os.environ.get("TEMPORAL_MPT_LOG_ACADOS", "").strip().lower() in (
+            "1",
+            "true",
+            "yes",
+            "on",
+        )
     x_pts = np.asarray(x_pts, dtype=float)
     y_pts = np.asarray(y_pts, dtype=float)
     psi_pts = np.asarray(psi_pts, dtype=float)
     v_pts = np.asarray(v_pts, dtype=float)
     x0 = np.array(x0, dtype=float, copy=True)
+    if x0.shape[0] == 4:
+        x0 = np.concatenate([x0, np.zeros(2)])
+    if x0.shape[0] != NX_DEFAULT:
+        raise ValueError(f"x0 must have length 4 or 6, got {x0.shape[0]}")
 
     n_pts = x_pts.shape[0]
     if n_pts < 2:
         raise ValueError("need at least 2 reference points")
-    nx = int(x0.shape[0])
+    nx = NX_DEFAULT
     best_d2 = float("inf")
     start_idx = 0
     for i in range(n_pts):
@@ -234,16 +432,22 @@ def solve_autoware_temporal_mpc(
             start_idx = i
 
     two_pi = 2.0 * np.pi
-    # Same branch alignment as run_closed_loop_mpc: shift all ref headings by k*2π so the
-    # reference at start_idx matches ego yaw in LINEAR_LS (avoids false ~2π psi cost when logs
-    # wrap or use a different atan2 branch than the bicycle state).
     psi_bias = float(np.round((float(x0[2]) - float(psi_pts[start_idx])) / two_pi) * two_pi)
 
     yref = np.zeros((N, ny_stage))
     for k in range(N):
         if k == 0:
             yref[k, :] = np.array(
-                [float(x0[0]), float(x0[1]), float(x0[2]), float(x0[3]), 0.0, 0.0]
+                [
+                    float(x0[0]),
+                    float(x0[1]),
+                    float(x0[2]),
+                    float(x0[3]),
+                    float(x0[4]),
+                    float(x0[5]),
+                    0.0,
+                    0.0,
+                ]
             )
         else:
             idx = min(start_idx + k, n_pts - 1)
@@ -256,6 +460,8 @@ def solve_autoware_temporal_mpc(
             float(y_pts[j_e]),
             float(psi_pts[j_e]) + psi_bias,
             float(v_pts[j_e]),
+            0.0,
+            0.0,
         ]
     )
 
@@ -266,9 +472,9 @@ def solve_autoware_temporal_mpc(
     solver.set(0, "lbx", x0)
     solver.set(0, "ubx", x0)
     for i in range(N):
-        solver.set(i, "yref", yref[i])
+        apply_path_frame_stage(solver, i, yref[i])
         solver.set(i, "p", p_vec)
-    solver.set(N, "yref", yref_e)
+    apply_path_frame_terminal(solver, N, yref_e)
     solver.set(N, "p", p_vec)
 
     status = int(solver.solve())
@@ -281,6 +487,9 @@ def solve_autoware_temporal_mpc(
         sol_u[i, :] = solver.get(i, "u").flatten()
 
     unshift_sol_x_xy(sol_x, x_off, y_off)
+
+    if log_acados:
+        print_acados_solve_report(solver, N, status, sol_u)
 
     return sol_x, sol_u, status
 
@@ -733,3 +942,141 @@ def add_common_temporal_mpc_arguments(
     parser.add_argument(
         "--x0", type=str, default="", help='Initial bicycle state: "x,y,psi" or "x,y,psi,v".'
     )
+
+
+# ---------------------------------------------------------------------------
+# Runtime LINEAR_LS weight helpers (temporal path-tracking MPC)
+# ---------------------------------------------------------------------------
+
+# Defaults match generators/path_tracking_mpc_temporal.py (path-frame Q).
+# Q: q_long, q_lat, q_psi, q_v, q_a, q_delta  (qa/qdelta default 0)
+DEFAULT_Q_DIAG = (5.0e-1, 5.0e0, 5.0e-2, 5.0e-2, 0.0, 0.0)
+DEFAULT_R_DIAG = (2.5e-2, 2.0e0)  # ra (a_cmd), rdelta (delta_cmd)
+DEFAULT_QE_SCALE = 2.5
+
+WEIGHT_KEYS = (
+    "qlong",
+    "qlat",
+    "qx",
+    "qy",
+    "qpsi",
+    "qv",
+    "qa",
+    "qdelta",
+    "ra",
+    "rdelta",
+    "qex",
+    "qey",
+    "qelong",
+    "qelat",
+    "qepsi",
+    "qev",
+    "qea",
+    "qedelta",
+    "qe_scale",
+)
+
+
+def default_q_r_qe() -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Return default ``Q``, ``R``, ``Qe`` matrices (before acados time scaling)."""
+    q = np.diag(list(DEFAULT_Q_DIAG))
+    r = np.diag(list(DEFAULT_R_DIAG))
+    qe = DEFAULT_QE_SCALE * q
+    return q, r, qe
+
+
+def scale_stage_and_terminal_w(
+    q: np.ndarray, r: np.ndarray, qe: np.ndarray, *, n_horizon: int, tf: float
+) -> tuple[np.ndarray, np.ndarray]:
+    """Build scaled ``W`` / ``W_e`` the same way as ``PathTrackingMPCTemporal`` codegen."""
+    unscale = float(n_horizon) / float(tf)
+    w = unscale * np.block(
+        [[q, np.zeros((q.shape[0], r.shape[1]))], [np.zeros((r.shape[0], q.shape[1])), r]]
+    )
+    w_e = qe / unscale
+    return w, w_e
+
+
+def apply_cost_weights(solver, n_horizon: int, w: np.ndarray, w_e: np.ndarray) -> None:
+    """Set LINEAR_LS ``W`` on stages ``0..N-1`` and ``W`` (terminal) on stage ``N``."""
+    for i in range(n_horizon):
+        solver.cost_set(i, "W", w, api="new")
+    solver.cost_set(n_horizon, "W", w_e, api="new")
+
+
+def weights_dict_from_q_r_qe(
+    q: np.ndarray, r: np.ndarray, qe: np.ndarray, *, qe_scale: float | None = None
+) -> dict[str, float]:
+    """Flatten ``Q``/``R``/``Qe`` into CLI/YAML-friendly keys."""
+    out = {
+        "qlong": float(q[0, 0]),
+        "qlat": float(q[1, 1]),
+        "qpsi": float(q[2, 2]),
+        "qv": float(q[3, 3]),
+        "qa": float(q[4, 4]),
+        "qdelta": float(q[5, 5]),
+        "ra": float(r[0, 0]),
+        "rdelta": float(r[1, 1]),
+        "qelong": float(qe[0, 0]),
+        "qelat": float(qe[1, 1]),
+        "qepsi": float(qe[2, 2]),
+        "qev": float(qe[3, 3]),
+        "qea": float(qe[4, 4]),
+        "qedelta": float(qe[5, 5]),
+    }
+    if qe_scale is not None:
+        out["qe_scale"] = float(qe_scale)
+    return out
+
+
+def parse_weight_overrides(
+    overrides: dict[str, float],
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Merge ``overrides`` onto default ``Q``/``R``/``Qe``.
+
+    Path-frame: ``qlong``, ``qlat``. Command costs: ``ra``, ``rdelta``.
+    Optional state actuator weights: ``qa``, ``qdelta``.
+    """
+    q, r, qe = default_q_r_qe()
+    unknown = sorted(k for k in overrides if k not in WEIGHT_KEYS)
+    if unknown:
+        raise ValueError(f"Unknown weight keys: {unknown}; allowed: {WEIGHT_KEYS}")
+
+    if "qlong" in overrides:
+        q[0, 0] = overrides["qlong"]
+    elif "qx" in overrides:
+        q[0, 0] = overrides["qx"]
+    if "qlat" in overrides:
+        q[1, 1] = overrides["qlat"]
+    elif "qy" in overrides:
+        q[1, 1] = overrides["qy"]
+    if "qpsi" in overrides:
+        q[2, 2] = overrides["qpsi"]
+    if "qv" in overrides:
+        q[3, 3] = overrides["qv"]
+    if "qa" in overrides:
+        q[4, 4] = overrides["qa"]
+    if "qdelta" in overrides:
+        q[5, 5] = overrides["qdelta"]
+    if "ra" in overrides:
+        r[0, 0] = overrides["ra"]
+    if "rdelta" in overrides:
+        r[1, 1] = overrides["rdelta"]
+
+    term_keys = ("qelong", "qelat", "qex", "qey", "qepsi", "qev", "qea", "qedelta")
+    if any(k in overrides for k in term_keys):
+        qe = np.diag(
+            [
+                overrides.get("qelong", overrides.get("qex", float(qe[0, 0]))),
+                overrides.get("qelat", overrides.get("qey", float(qe[1, 1]))),
+                overrides.get("qepsi", float(qe[2, 2])),
+                overrides.get("qev", float(qe[3, 3])),
+                overrides.get("qea", float(qe[4, 4])),
+                overrides.get("qedelta", float(qe[5, 5])),
+            ]
+        )
+    else:
+        scale = float(overrides.get("qe_scale", DEFAULT_QE_SCALE))
+        qe = scale * q.copy()
+
+    return q, r, qe

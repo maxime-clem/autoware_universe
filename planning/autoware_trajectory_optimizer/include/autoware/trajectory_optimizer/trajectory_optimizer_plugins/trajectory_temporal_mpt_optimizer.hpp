@@ -36,10 +36,15 @@ namespace autoware::trajectory_optimizer::plugin
 
 struct TemporalMPTParams
 {
-  /** Kinematic bicycle CG distances [m]; fixed 1.0 m to match Python examples /
-   * ocp.parameter_values. */
+  /** L = lf + lr (= wheel_base); lr = rear axle→box-center. */
   double lf{1.0};
   double lr{1.0};
+  /** First-order actuator lags [s] (MPPI acc/steer_time_constant). */
+  double tau_a{0.15};
+  double tau_d{0.08};
+  double max_steer_rate{3.0};
+  /** Shift previous acados x-star / u-star as NLP warm-start (standard receding-horizon). */
+  bool use_previous_solution_warm_start{true};
   size_t min_points_for_optimization{2};
   bool enable_debug_info{false};
   bool publish_debug_topics{true};
@@ -71,6 +76,10 @@ public:
 private:
   std::unique_ptr<temporal_mpt::AcadosInterface> acados_interface_;
   TemporalMPTParams mpt_params_;
+
+  bool have_prev_solution_{false};
+  std::array<std::array<double, temporal_mpt::NX>, temporal_mpt::N + 1> prev_x_world_{};
+  std::array<std::array<double, temporal_mpt::NU>, temporal_mpt::N> prev_u_{};
 
   void create_or_reset_solver();
   void write_temporal_mpt_replay_fixture(

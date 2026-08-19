@@ -248,7 +248,7 @@ public:
    *        sequence (warm start). From a stop, always reseed from the diffusion reference.
    */
   void setAblationOptions(
-    const bool ignore_obstacles, const bool ignore_drivable_area,
+    const bool ignore_obstacles, const bool ignore_road_borders, const bool ignore_drivable_area,
     const bool force_cold_start_each_step, const bool skip_if_invalid,
     bool use_last_control_as_nominal = false);
 

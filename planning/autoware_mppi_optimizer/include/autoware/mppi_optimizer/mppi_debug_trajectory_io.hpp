@@ -408,6 +408,7 @@ inline bool loadMppiDebugRuntimeOptionsCsv(
     options.min_optimization_length = min_optimization_length_it->second;
   }
   options.ignore_obstacles = as_bool("ignore_obstacles", options.ignore_obstacles);
+  options.ignore_road_borders = as_bool("ignore_road_borders", options.ignore_road_borders);
   options.ignore_drivable_area = as_bool("ignore_drivable_area", options.ignore_drivable_area);
   options.force_cold_start_each_step =
     as_bool("force_cold_start_each_step", options.force_cold_start_each_step);

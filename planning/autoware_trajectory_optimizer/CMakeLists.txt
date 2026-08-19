@@ -147,6 +147,8 @@ install(FILES
 install(PROGRAMS
   scripts/temporal_mpt_debug_visualizer.py
   scripts/temporal_mpt_python_reference.py
+  scripts/temporal_mpt_offline_retune.py
+  scripts/temporal_mpt_offline_tuner.py
   DESTINATION lib/${PROJECT_NAME}
 )
 

@@ -67,6 +67,7 @@ Various features can be disabled by changing the following parameters set in `mp
 
 ```yaml
 ignore_obstacles: true
+ignore_road_borders: true
 ignore_drivable_area: true
 force_cold_start_each_step: true
 min_optimization_length: 0.0
@@ -78,6 +79,7 @@ Then rebuild / restart the diffusion planner and compare live MPPI to offline re
 Notes:
 
 - `ignore_obstacles` drops tracked objects before MPPI (matches offline's empty objects).
+- `ignore_road_borders` drops static road-border segments before MPPI.
 - `ignore_drivable_area` is retained as an ablation flag; on this stack boundary crash is already
   disabled in the cost (`isEgoOutsideDrivableArea` always false).
 - `force_cold_start_each_step` only resets tracking counters / arc-length (control is already

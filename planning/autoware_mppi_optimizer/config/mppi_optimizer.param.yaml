@@ -12,7 +12,7 @@
     lateral_distance_coeff: 4000.0
     lateral_yaw_error_coeff: 500.0
     # Soft cost on remaining corridor chord length to path end [m]; 0 = off.
-    remaining_distance_coeff: 500.0
+    remaining_distance_coeff: 40.0
     # Soft cost on along-track distance past the corridor tip [m]; 0 = off.
     path_overshoot_coeff: 1000.0
     # Track the center of the ego footprint against the time-indexed reference; 0 = off.
@@ -35,9 +35,9 @@
     boundary_threshold: 0.8
     lateral_boundary_soft_margin: 0.2
     obstacle_collision_margin: 0.2
-    road_border_collision_margin: 0.2
+    road_border_collision_margin: 0.1
     obstacle_safe_margin: 0.4
-    road_border_safe_margin: 0.4
+    road_border_safe_margin: 0.2
     crash_contact_penalty: 100000.0  # cost applied when the distance from a road_border/obstacle/lateral bound is exactly 0 (including hard margin)
 
     nominal_curvature_min_chord_length_m: 1.5
@@ -46,20 +46,20 @@
     # Delays still come from simulator_model when this is true.
     enable_input_delay_compensation: true
 
+    ignore_obstacles: false
+    ignore_drivable_area: false
+    force_cold_start_each_step: false
+    skip_if_invalid: true  # if the MPPI output is invalid (i.e., collides with obstacles or road borders), the input reference is returned
+    min_optimization_length: 0.0  # [m] skip MPPI optimization if the input reference trajectory is shorter than this length
+
+    # Cold-seed u_nom from acados temporal MPT (same N=80, dt=0.1 as MPPI). Falls back to
+    # geometric diffusion seed if the solve fails. Combines with use_last_control_as_nominal
+    # (previous u_opt → t-MPT warm-start, then t-MPT → u_nom).
+    use_temporal_mpt_as_nominal: true
+    use_last_control_as_nominal: true
 
     # Optional offline debug logging for mppi_debug_visualizer.py --log-dir
     # Empty directory resolves to $XDG_CACHE_HOME/autoware/mppi_debug_log
     # (or $HOME/.cache/autoware/mppi_debug_log).
     enable_debug_trajectory_log: false
     debug_trajectory_log_directory: ""
-
-    ignore_obstacles: false
-    ignore_drivable_area: true
-    force_cold_start_each_step: false
-    skip_if_invalid: true  # if the MPPI output is invalid (i.e., collides with obstacles or road borders), the input reference is returned
-    min_optimization_length: 10.0  # [m] skip MPPI optimization if the input reference trajectory is shorter than this length
-    # Warm-start u_nom from shifted previous optimized controls (else reseed from DP each cycle).
-    use_last_control_as_nominal: false
-    # Cold-seed u_nom from acados temporal MPT (same N=80, dt=0.1 as MPPI). Falls back to
-    # geometric diffusion seed if the solve fails.
-    use_temporal_mpt_as_nominal: true

@@ -11,6 +11,9 @@ endif()
 set(TEMPORAL_MODEL kinematic_bicycle_temporal)
 set(GEN_DIR "${CMAKE_CURRENT_BINARY_DIR}/c_generated_code")
 
+# Always-emitted core sources + optional nonlinear-constraint sources (present when NH > 0).
+# Missing constraint files are stubbed after codegen so this list stays NH-agnostic and
+# parallel builds do not race on absent OUTPUTs.
 set(GENERATED_TEMPORAL_MPC_FILES
   ${GEN_DIR}/acados_solver_${TEMPORAL_MODEL}.h
   ${GEN_DIR}/acados_solver_${TEMPORAL_MODEL}.c
@@ -20,6 +23,8 @@ set(GENERATED_TEMPORAL_MPC_FILES
   ${GEN_DIR}/${TEMPORAL_MODEL}_model/${TEMPORAL_MODEL}_model.h
   ${GEN_DIR}/${TEMPORAL_MODEL}_constraints/${TEMPORAL_MODEL}_constr_h_fun.c
   ${GEN_DIR}/${TEMPORAL_MODEL}_constraints/${TEMPORAL_MODEL}_constr_h_fun_jac_uxt_zt.c
+  ${GEN_DIR}/${TEMPORAL_MODEL}_constraints/${TEMPORAL_MODEL}_constr_h_0_fun.c
+  ${GEN_DIR}/${TEMPORAL_MODEL}_constraints/${TEMPORAL_MODEL}_constr_h_0_fun_jac_uxt_zt.c
 )
 
 # CRITICAL: Mark files as generated so CMake knows to wait for them
@@ -38,10 +43,15 @@ add_custom_command(
   COMMAND ${CMAKE_COMMAND} -E env ${_env_vars}
     ${ACADOS_SOURCE_DIR}/.venv/bin/python3
     ${CMAKE_CURRENT_SOURCE_DIR}/generators/path_tracking_mpc_temporal.py
+  COMMAND ${CMAKE_COMMAND}
+    -DGEN_DIR=${GEN_DIR}
+    -DTEMPORAL_MODEL=${TEMPORAL_MODEL}
+    -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/ensure_optional_acados_sources.cmake
   WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
   DEPENDS
     ${CMAKE_CURRENT_SOURCE_DIR}/generators/path_tracking_mpc_temporal.py
     ${CMAKE_CURRENT_SOURCE_DIR}/generators/bicycle_model_temporal.py
+    ${CMAKE_CURRENT_SOURCE_DIR}/cmake/ensure_optional_acados_sources.cmake
   COMMENT "Generating acados MPC solver code"
 )
 

@@ -296,6 +296,7 @@ FirstOrderDubinsMppiRuntimeOptions loadRuntimeOptionsFromLog(const std::string &
   // Defaults match config/mppi_optimizer.param.yaml online stack.
   FirstOrderDubinsMppiRuntimeOptions options;
   options.ignore_obstacles = false;
+  options.ignore_road_borders = false;
   options.ignore_drivable_area = true;
   options.force_cold_start_each_step = false;
   options.skip_if_invalid = true;
