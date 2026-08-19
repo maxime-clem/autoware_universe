@@ -58,6 +58,88 @@ void append_lanelet_linestring_segments(
       autoware_utils_geometry::Point2d(line_string[i + 1].x(), line_string[i + 1].y()));
   }
 }
+
+template <class Segment>
+void append_simplified_lanelet_linestring_segments(
+  std::vector<Segment> & segments, const lanelet::LineString2d & line_string)
+{
+  if (line_string.size() < 2) {
+    return;
+  }
+
+  // Maximum allowed deviation in meters when simplifying (e.g., 1 cm)
+  constexpr double kMaxError = 0.01;
+  constexpr double kMaxErrorSq = kMaxError * kMaxError;
+
+  segments.reserve(segments.size() + line_string.size() - 1);
+
+  std::size_t start = 0;
+  while (start < line_string.size() - 1) {
+    std::size_t end = start + 1;
+
+    // Fast-forward past identical points to establish a valid baseline
+    while (end < line_string.size() && line_string[end].x() == line_string[start].x() &&
+           line_string[end].y() == line_string[start].y()) {
+      ++end;
+    }
+
+    if (end == line_string.size()) {
+      break;  // All remaining points were identical
+    }
+
+    // Expand the segment as long as intermediate points stay within kMaxError
+    std::size_t next = end + 1;
+    while (next < line_string.size()) {
+      const double x1 = line_string[start].x();
+      const double y1 = line_string[start].y();
+      const double x2 = line_string[next].x();
+      const double y2 = line_string[next].y();
+
+      const double dx = x2 - x1;
+      const double dy = y2 - y1;
+      const double length_sq = dx * dx + dy * dy;
+
+      if (length_sq < 1e-8) {
+        // Start and next are virtually identical; merge them safely
+        end = next;
+        ++next;
+        continue;
+      }
+
+      // Check distance of ALL intermediate points (from start+1 to next-1) to the line start->next
+      bool is_collinear = true;
+      for (std::size_t i = start + 1; i < next; ++i) {
+        const double px = line_string[i].x();
+        const double py = line_string[i].y();
+
+        // Perpendicular distance squared from point p to line (x1,y1)-(x2,y2)
+        const double cross = (x2 - x1) * (y1 - py) - (x1 - px) * (y2 - y1);
+        const double dist_sq = (cross * cross) / length_sq;
+
+        // Also check if the point went "backwards" (dot product < 0)
+        const double dot = (px - x1) * dx + (py - y1) * dy;
+
+        if (dist_sq > kMaxErrorSq || dot < 0.0) {
+          is_collinear = false;
+          break;
+        }
+      }
+
+      if (!is_collinear) {
+        break;
+      }
+
+      end = next;  // Passed, this point is safely collinear
+      ++next;
+    }
+
+    segments.emplace_back(
+      autoware_utils_geometry::Point2d(line_string[start].x(), line_string[start].y()),
+      autoware_utils_geometry::Point2d(line_string[end].x(), line_string[end].y()));
+
+    start = end;
+  }
+}
 }  // namespace detail
 
 /**
@@ -85,7 +167,7 @@ inline SegmentRtree prepare_road_border_rtree(
 {
   std::vector<Segment> segments;
   for (const auto & road_border : road_borders) {
-    detail::append_lanelet_linestring_segments(segments, road_border);
+    detail::append_simplified_lanelet_linestring_segments(segments, road_border);
   }
   return {segments.begin(), segments.end()};
 }
@@ -96,8 +178,8 @@ inline SegmentRtree prepare_road_border_rtree(
 inline SegmentRtree prepare_drivable_area_rtree(const RouteBounds & drivable_area)
 {
   std::vector<Segment> segments;
-  detail::append_lanelet_linestring_segments(segments, drivable_area.first);
-  detail::append_lanelet_linestring_segments(segments, drivable_area.second);
+  detail::append_simplified_lanelet_linestring_segments(segments, drivable_area.first);
+  detail::append_simplified_lanelet_linestring_segments(segments, drivable_area.second);
   return {segments.begin(), segments.end()};
 }
 
