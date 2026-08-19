@@ -898,6 +898,25 @@ struct FirstOrderDubinsMppiInterface::Impl
     model.setParams(dyn);
   }
 
+  /// @brief Elevate active limits to hard rollout constraints. If no dynamic limit is active,
+  /// fallback to the vehicle's physical hardware limits.
+  void syncKinematicLimitsToModel()
+  {
+    dyn.min_accel =
+      active_kinematic_limits.min_longitudinal_acceleration
+        ? std::max(
+            vehicle_params.min_accel(), *active_kinematic_limits.min_longitudinal_acceleration)
+        : vehicle_params.min_accel();
+
+    dyn.max_accel =
+      active_kinematic_limits.max_longitudinal_acceleration
+        ? std::min(
+            vehicle_params.max_accel(), *active_kinematic_limits.max_longitudinal_acceleration)
+        : vehicle_params.max_accel();
+
+    model.setParams(dyn);
+  }
+
   void resizeChannelDelayBuffer(std::vector<float> & buffer, const int n, const float hold)
   {
     if (n <= 0) {
@@ -1256,6 +1275,7 @@ struct FirstOrderDubinsMppiInterface::Impl
     diffusion_reference = reference;
     active_kinematic_limits = sanitizeKinematicLimits(kinematic_limits);
     cost.setKinematicLimits(makeKinematicLimitCostData(active_kinematic_limits));
+    syncKinematicLimitsToModel();
     diffusion_reference_chord_length_s = detail::computeCumulativeChordLength(diffusion_reference);
     tracked_objects = ignore_obstacles ? TrackedObjects{} : tracked_objects_in;
     road_borders = ignore_road_borders ? std::vector<Segment>() : road_borders_in;
