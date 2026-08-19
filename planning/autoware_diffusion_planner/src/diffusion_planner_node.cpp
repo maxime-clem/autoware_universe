@@ -867,6 +867,8 @@ void DiffusionPlanner::publish_mppi_cost_diagnostics(
   diagnostics_mppi_cost_->add_key_value("state/drivable_area", cost.drivable_area);
   diagnostics_mppi_cost_->add_key_value("state/obstacle", cost.obstacle);
   diagnostics_mppi_cost_->add_key_value("state/road_border", cost.road_border);
+  diagnostics_mppi_cost_->add_key_value("state/remaining_distance", cost.remaining_distance);
+  diagnostics_mppi_cost_->add_key_value("state/path_overshoot", cost.path_overshoot);
   diagnostics_mppi_cost_->add_key_value("control/acceleration_command", cost.acceleration_command);
   diagnostics_mppi_cost_->add_key_value("control/steering_command", cost.steering_command);
   diagnostics_mppi_cost_->add_key_value("comfort/lateral_acceleration", cost.lateral_acceleration);
