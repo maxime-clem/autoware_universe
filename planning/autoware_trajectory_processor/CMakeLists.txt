@@ -116,11 +116,17 @@ else()
 endif()
 if(_traj_opt_qpoases_lib)
   if(UNIX AND NOT APPLE)
-    target_link_options(autoware_trajectory_optimizer_plugins PRIVATE "LINKER:--no-as-needed")
-  endif()
-  target_link_libraries(autoware_trajectory_optimizer_plugins ${_traj_opt_qpoases_lib})
-  if(UNIX AND NOT APPLE)
-    target_link_options(autoware_trajectory_optimizer_plugins PRIVATE "LINKER:--as-needed")
+    # Keep the state-changing linker flags adjacent to qpOASES. target_link_options()
+    # places every option before the libraries, which would re-enable --as-needed
+    # before qpOASES is encountered and silently drop its DT_NEEDED entry.
+    target_link_libraries(autoware_trajectory_optimizer_plugins PRIVATE
+      "-Wl,--no-as-needed"
+      ${_traj_opt_qpoases_lib}
+      "-Wl,--as-needed"
+    )
+  else()
+    target_link_libraries(
+      autoware_trajectory_optimizer_plugins PRIVATE ${_traj_opt_qpoases_lib})
   endif()
 endif()
 unset(_traj_opt_qpoases_lib_path CACHE)
