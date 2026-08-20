@@ -1748,7 +1748,7 @@ FirstOrderDubinsMppiOptimizationResult FirstOrderDubinsMppiInterface::optimizeTr
     result.debug.baseline_cost = impl_->controller->getBaselineCost();
     result.debug.rollouts.clear();
   }
-  if (n_state > 0 && n_ctrl > 0) {
+  if (impl_->debug_trajectory_logger.enabled() && n_state > 0 && n_ctrl > 0) {
     result.debug.cost_breakdown =
       reconstructControlTrajectoryCost(impl_->cost, impl_->model, x_at_optimization, u_opt_traj);
     const auto nominal_controls =
