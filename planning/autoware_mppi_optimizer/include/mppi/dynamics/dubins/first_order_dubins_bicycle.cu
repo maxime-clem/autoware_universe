@@ -143,6 +143,9 @@ void FirstOrderDubinsBicycleImpl<CLASS_T, PARAMS_T>::updateState(
   Eigen::Ref<state_array> state_der, const float dt)
 {
   next_state = state + state_der * dt;
+  if (this->params_.prevent_reverse_velocity) {
+    next_state(static_cast<int>(S::VEL_X)) = fmaxf(next_state(static_cast<int>(S::VEL_X)), 0.0F);
+  }
   next_state(static_cast<int>(S::YAW)) =
     angle_utils::normalizeAngle(next_state(static_cast<int>(S::YAW)));
   next_state(static_cast<int>(S::STEER_ANGLE)) = fmaxf(
@@ -185,6 +188,9 @@ __device__ void FirstOrderDubinsBicycleImpl<CLASS_T, PARAMS_T>::updateState(
 #endif
   for (int i = threadIdx.y; i < PARENT_CLASS::STATE_DIM; i += blockDim.y) {
     next_state[i] = state[i] + state_der[i] * dt;
+    if (i == static_cast<int>(S::VEL_X) && this->params_.prevent_reverse_velocity) {
+      next_state[i] = fmaxf(next_state[i], 0.0F);
+    }
     if (i == static_cast<int>(S::YAW)) {
       next_state[i] = angle_utils::normalizeAngle(next_state[i]);
     }
@@ -220,6 +226,24 @@ __device__ void FirstOrderDubinsBicycleImpl<CLASS_T, PARAMS_T>::computeDynamics(
   float * state, float * control, float * state_der, float *)
 {
   firstOrderDubinsBicycleDeriv(this->params_, state, control, state_der);
+}
+
+template <class CLASS_T, class PARAMS_T>
+__device__ void FirstOrderDubinsBicycleImpl<CLASS_T, PARAMS_T>::enforceConstraints(
+  float * state, float * control)
+{
+  PARENT_CLASS::enforceConstraints(state, control);
+  if (threadIdx.y != 0 || !this->params_.prevent_reverse_velocity) {
+    return;
+  }
+
+  const int velocity_idx = static_cast<int>(S::VEL_X);
+  const int acceleration_idx = static_cast<int>(C::ACCELERATION_CMD);
+  const float velocity = state[velocity_idx];
+  const float acceleration_command = control[acceleration_idx];
+  if (velocity >= 0.0F && velocity + acceleration_command * PARAMS_T::kControlDt < 0.0F) {
+    control[acceleration_idx] = -velocity / PARAMS_T::kControlDt;
+  }
 }
 
 template <class CLASS_T, class PARAMS_T>

@@ -305,6 +305,7 @@ FirstOrderDubinsMppiRuntimeOptions loadRuntimeOptionsFromLog(const std::string &
   options.force_cold_start_each_step = false;
   options.skip_if_invalid = true;
   options.use_last_control_as_nominal = true;
+  options.prevent_reverse_velocity = true;
   options.enable_input_delay_compensation = true;
   if (loadMppiDebugRuntimeOptionsCsv(log_dir + "/runtime_options.csv", options)) {
     std::cerr << "Loaded runtime options from " << log_dir << "/runtime_options.csv\n";

@@ -227,6 +227,7 @@ public:
           << "\n";
       out << "use_temporal_mpt_as_nominal," << (options.use_temporal_mpt_as_nominal ? 1 : 0)
           << "\n";
+      out << "prevent_reverse_velocity," << (options.prevent_reverse_velocity ? 1 : 0) << "\n";
       out << "enable_input_delay_compensation," << (options.enable_input_delay_compensation ? 1 : 0)
           << "\n";
     }

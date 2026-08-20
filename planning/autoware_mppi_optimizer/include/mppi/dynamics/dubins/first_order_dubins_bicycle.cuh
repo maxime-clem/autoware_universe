@@ -25,6 +25,8 @@ struct FirstOrderDubinsBicycleParams : public DynamicsParams
 {
   /** Max discrete dead-time taps per channel (covers τ up to ~0.8 s at dt=0.1). */
   static constexpr int kMaxInputDelaySteps = 8;
+  /** Fixed MPPI integration period used by the reverse-velocity control constraint. */
+  static constexpr float kControlDt = 0.1F;
 
   enum class StateIndex : int {
     VEL_X = 0,
@@ -82,6 +84,8 @@ struct FirstOrderDubinsBicycleParams : public DynamicsParams
   float max_steer_rate = 3.0F;
   float min_accel = -6.0F;
   float max_accel = 4.0F;
+  /** Prevent acceleration commands and integrated states from producing reverse velocity. */
+  bool prevent_reverse_velocity = true;
   /** Discrete ZOH delay steps (0 = no delay). Clamped to [0, kMaxInputDelaySteps]. */
   int acc_delay_steps = 0;
   int steer_delay_steps = 0;
@@ -127,6 +131,8 @@ public:
   using output_array = typename PARENT_CLASS::output_array;
   using dfdx = typename PARENT_CLASS::dfdx;
   using dfdu = typename PARENT_CLASS::dfdu;
+  // Keep the parent host overload: MPPI's generic host pass supplies a placeholder zero state.
+  using PARENT_CLASS::enforceConstraints;
   using PARENT_CLASS::updateState;
 
   FirstOrderDubinsBicycleImpl(cudaStream_t stream = nullptr);
@@ -166,6 +172,9 @@ public:
 
   __device__ void computeDynamics(
     float * state, float * control, float * state_der, float * theta = nullptr);
+
+  /** Device-only state-aware control filtering; host calls retain the parent constraints. */
+  __device__ void enforceConstraints(float * state, float * control);
 
   void stateToOutput(const Eigen::Ref<const state_array> & state, Eigen::Ref<output_array> output);
 

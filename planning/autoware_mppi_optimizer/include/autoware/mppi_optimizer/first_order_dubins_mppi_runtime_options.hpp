@@ -42,6 +42,8 @@ struct FirstOrderDubinsMppiRuntimeOptions
    * Combines with use_last_control_as_nominal (shifted u_opt → t-MPT warm-start).
    */
   bool use_temporal_mpt_as_nominal{false};
+  /** Prevent MPPI rollouts from integrating longitudinal velocity below zero. */
+  bool prevent_reverse_velocity{true};
   /**
    * When false, ignore vehicle acc/steer time delays in the MPPI plant (N_acc = N_steer = 0).
    * Vehicle τ (first-order lag) is unchanged. Default true preserves delay compensation.

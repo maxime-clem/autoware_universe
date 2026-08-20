@@ -659,6 +659,8 @@ struct FirstOrderDubinsMppiInterface::Impl
   bool use_last_control_as_nominal{false};
   /** Cold-seed u_nom from acados temporal MPT instead of geometric diffusion seed. */
   bool use_temporal_mpt_as_nominal{false};
+  /** Prevent acceleration commands and integrated states from producing reverse velocity. */
+  bool prevent_reverse_velocity{true};
   /** When false, force N_acc = N_steer = 0 (vehicle delay params ignored). */
   bool enable_input_delay_compensation{true};
   detail::TemporalMptNominalSeeder temporal_mpt_nominal_seeder;
@@ -715,6 +717,7 @@ struct FirstOrderDubinsMppiInterface::Impl
     dyn.max_steer_rate = vehicle_params.steer_rate_lim;
     dyn.min_accel = vehicle_params.min_accel();
     dyn.max_accel = vehicle_params.max_accel();
+    dyn.prevent_reverse_velocity = prevent_reverse_velocity;
     model.setParams(dyn);
     temporal_mpt_nominal_seeder.setBicycleParameters(
       vehicle_params.wheel_base, vehicle_params.ego_axle_to_box_center,
@@ -1403,6 +1406,7 @@ void FirstOrderDubinsMppiInterface::setRuntimeOptions(
   if (!impl_) {
     throw std::runtime_error("FirstOrderDubinsMppiInterface implementation is missing");
   }
+  impl_->prevent_reverse_velocity = options.prevent_reverse_velocity;
   setDebugTrajectoryLogging(
     options.enable_debug_trajectory_log, options.debug_trajectory_log_directory);
   setAblationOptions(
@@ -1415,6 +1419,7 @@ void FirstOrderDubinsMppiInterface::setRuntimeOptions(
   impl_->use_temporal_mpt_as_nominal = options.use_temporal_mpt_as_nominal;
   impl_->enable_input_delay_compensation = options.enable_input_delay_compensation;
   impl_->min_optimization_length = options.min_optimization_length;
+  impl_->dyn.prevent_reverse_velocity = options.prevent_reverse_velocity;
   if (impl_->initialized) {
     impl_->syncDelayStepsToModel();
     if (!impl_->enable_input_delay_compensation) {
@@ -1426,9 +1431,11 @@ void FirstOrderDubinsMppiInterface::setRuntimeOptions(
   }
   RCLCPP_INFO(
     mppiLogger(),
-    "MPPI nominal seed: use_temporal_mpt_as_nominal=%s enable_input_delay_compensation=%s",
+    "MPPI nominal seed: use_temporal_mpt_as_nominal=%s enable_input_delay_compensation=%s "
+    "prevent_reverse_velocity=%s",
     options.use_temporal_mpt_as_nominal ? "true" : "false",
-    options.enable_input_delay_compensation ? "true" : "false");
+    options.enable_input_delay_compensation ? "true" : "false",
+    options.prevent_reverse_velocity ? "true" : "false");
 }
 void FirstOrderDubinsMppiInterface::setDebugTrajectoryLogging(
   const bool enable, const std::string & directory)
@@ -1470,6 +1477,7 @@ void FirstOrderDubinsMppiInterface::setAblationOptions(
   runtime.min_optimization_length = impl_->min_optimization_length;
   runtime.use_last_control_as_nominal = use_last_control_as_nominal;
   runtime.use_temporal_mpt_as_nominal = impl_->use_temporal_mpt_as_nominal;
+  runtime.prevent_reverse_velocity = impl_->prevent_reverse_velocity;
   runtime.enable_input_delay_compensation = impl_->enable_input_delay_compensation;
   impl_->debug_trajectory_logger.writeRuntimeOptionsOnce(runtime);
 }
@@ -1775,6 +1783,7 @@ FirstOrderDubinsMppiOptimizationResult FirstOrderDubinsMppiInterface::optimizeTr
     runtime.min_optimization_length = impl_->min_optimization_length;
     runtime.use_last_control_as_nominal = impl_->use_last_control_as_nominal;
     runtime.use_temporal_mpt_as_nominal = impl_->use_temporal_mpt_as_nominal;
+    runtime.prevent_reverse_velocity = impl_->prevent_reverse_velocity;
     runtime.enable_input_delay_compensation = impl_->enable_input_delay_compensation;
     impl_->debug_trajectory_logger.writeRuntimeOptionsOnce(runtime);
   }
