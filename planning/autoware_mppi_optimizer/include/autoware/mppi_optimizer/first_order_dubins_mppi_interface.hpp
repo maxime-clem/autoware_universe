@@ -111,6 +111,7 @@ enum class FirstOrderDubinsMppiInvalidityReason : std::uint8_t {
   lateral_boundary = 1U << 0U,
   obstacle = 1U << 1U,
   road_border = 1U << 2U,
+  reverse = 1U << 3U,
 };
 
 inline std::string to_string(FirstOrderDubinsMppiInvalidityReason reason)
@@ -130,6 +131,9 @@ inline std::string to_string(FirstOrderDubinsMppiInvalidityReason reason)
   }
   if (val & static_cast<std::uint8_t>(FirstOrderDubinsMppiInvalidityReason::road_border)) {
     result += "road_border | ";
+  }
+  if (val & static_cast<std::uint8_t>(FirstOrderDubinsMppiInvalidityReason::reverse)) {
+    result += "reverse | ";
   }
 
   // Remove the trailing " | " if the string is not empty

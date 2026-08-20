@@ -41,6 +41,9 @@ template <class Cost>
     if (cost.egoIntersectsRoadBorder(state.x, state.y, state.yaw)) {
       reasons = reasons | FirstOrderDubinsMppiInvalidityReason::road_border;
     }
+    if (state.velocity < 0.0) {
+      reasons = reasons | FirstOrderDubinsMppiInvalidityReason::reverse;
+    }
     if (reasons != FirstOrderDubinsMppiInvalidityReason::none) {
       return FirstOrderDubinsMppiValidationResult{reasons, i};
     }
