@@ -29,6 +29,9 @@
     # MPPI control-sample noise std-devs around the nominal (u_nom).
     accel_cmd_std_dev: 0.1
     steer_cmd_std_dev: 0.02
+    # Power-law PSD exponents (0 = white, 1 = pink, 2 = brown) for colored noise.
+    accel_cmd_noise_exponent: 1.0
+    steer_cmd_noise_exponent: 1.0
     drivable_area_safe_margin: 0.0
     drivable_area_barrier_weight: 0.0
     # Crash costs

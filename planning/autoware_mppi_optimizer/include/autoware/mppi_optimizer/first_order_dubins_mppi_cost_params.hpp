@@ -47,6 +47,10 @@ struct FirstOrderDubinsMppiCostParams
   float accel_cmd_std_dev{0.35F};
   /** Gaussian sampling std-dev on steer command [rad] around u_nom. */
   float steer_cmd_std_dev{0.024F};
+  /** Power-law PSD exponent for acceleration-command sampling noise. */
+  float accel_cmd_noise_exponent{1.0F};
+  /** Power-law PSD exponent for steering-command sampling noise. */
+  float steer_cmd_noise_exponent{1.0F};
   /** Spatial window used only when deriving a cold-start nominal steer from the reference. */
   float nominal_curvature_min_chord_length_m{1.5F};
   float lateral_acceleration_coeff{300.0F};

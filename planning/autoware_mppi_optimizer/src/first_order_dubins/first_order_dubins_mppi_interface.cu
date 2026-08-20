@@ -762,11 +762,10 @@ struct FirstOrderDubinsMppiInterface::Impl
       user_cost_params_.steer_cmd_std_dev;
     sp.sum_strides = std::max(32, (kNumRollouts + 1023) / 1024);
 #ifdef USE_COLOURED_NOISE
-    // Power-law PSD exponents (0 = white, 1 = pink, 2 = brown). Pink steer keeps lateral
-    // reach while cutting high-frequency δ_cmd chatter from i.i.d. Gaussian samples.
     sp.exponents[static_cast<int>(FirstOrderDubinsBicycleParams::ControlIndex::ACCELERATION_CMD)] =
-      1.0F;
-    sp.exponents[static_cast<int>(FirstOrderDubinsBicycleParams::ControlIndex::STEER_CMD)] = 1.0F;
+      user_cost_params_.accel_cmd_noise_exponent;
+    sp.exponents[static_cast<int>(FirstOrderDubinsBicycleParams::ControlIndex::STEER_CMD)] =
+      user_cost_params_.steer_cmd_noise_exponent;
 #elif defined(USE_SMOOTH_MPPI)
     // Smooth-MPPI samples action derivatives and integrates with dt.
     sp.dt = kDt;
