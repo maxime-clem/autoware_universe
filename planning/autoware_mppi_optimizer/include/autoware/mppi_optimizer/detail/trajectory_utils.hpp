@@ -77,6 +77,14 @@ void setInitialEngageVelocity(
   const float dt = kMppiDt, const size_t start_idx = 0U,
   const std::vector<float> * cumulative_chord_length_s = nullptr);
 
+/**
+ * Replace trajectory velocity/acceleration with a constant-deceleration stop profile when an
+ * active maximum velocity is below the current velocity. Returns true when the profile is applied.
+ */
+[[nodiscard]] bool applyKinematicLimitStopProfile(
+  Trajectory & trajectory, float current_velocity,
+  const FirstOrderDubinsMppiKinematicLimits & limits, float dt = kMppiDt);
+
 [[nodiscard]] std::vector<FirstOrderDubinsMppiControl> buildDiffusionNominalControl(
   const Trajectory & reference, std::size_t start_idx,
   const FirstOrderDubinsMppiVehicleParams & vehicle_params, int horizon = kMppiHorizon,

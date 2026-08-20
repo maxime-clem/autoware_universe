@@ -674,6 +674,7 @@ struct FirstOrderDubinsMppiInterface::Impl
   FirstOrderDubinsMppiVehicleParams vehicle_params{};
   FirstOrderDubinsMppiCostParams user_cost_params_{};
   FirstOrderDubinsMppiKinematicLimits active_kinematic_limits{};
+  bool kinematic_limit_stop_profile_active{false};
   MppiDebugTrajectoryLogger debug_trajectory_logger;
   COST cost;
   FirstOrderDubinsBicycleCostParams<kRefHorizon> cost_params{};
@@ -1145,8 +1146,16 @@ struct FirstOrderDubinsMppiInterface::Impl
     const int accel_idx =
       static_cast<int>(FirstOrderDubinsBicycleParams::ControlIndex::ACCELERATION_CMD);
     const int steer_idx = static_cast<int>(FirstOrderDubinsBicycleParams::ControlIndex::STEER_CMD);
+    float stop_profile_velocity = std::max(ego.velocity, 0.0F);
     for (int t = 0; t < kMppiHorizon; ++t) {
-      u_nom(accel_idx, t) = (*nominal)[static_cast<size_t>(t)].accel_cmd;
+      float acceleration_command = (*nominal)[static_cast<size_t>(t)].accel_cmd;
+      if (kinematic_limit_stop_profile_active) {
+        acceleration_command = stop_profile_velocity > 0.0F
+                                 ? *active_kinematic_limits.min_longitudinal_acceleration
+                                 : 0.0F;
+        stop_profile_velocity = std::max(0.0F, stop_profile_velocity + acceleration_command * kDt);
+      }
+      u_nom(accel_idx, t) = acceleration_command;
       u_nom(steer_idx, t) = (*nominal)[static_cast<size_t>(t)].steer_cmd;
     }
   }
@@ -1307,7 +1316,9 @@ struct FirstOrderDubinsMppiInterface::Impl
 
     const auto initial_state =
       detail::makeInitialState(odometry, acceleration, steering_status, vehicle_params);
-    seedNominalControl(reference, tracking_start_idx, initial_state);
+    kinematic_limit_stop_profile_active = detail::applyKinematicLimitStopProfile(
+      diffusion_reference, initial_state.velocity, active_kinematic_limits, kDt);
+    seedNominalControl(diffusion_reference, tracking_start_idx, initial_state);
 
     x = model.getZeroState();
     x(static_cast<int>(FirstOrderDubinsBicycleParams::StateIndex::POS_X)) = initial_state.x;
@@ -1351,7 +1362,7 @@ struct FirstOrderDubinsMppiInterface::Impl
     auto prepared_reference = detail::buildReferenceHorizon(
       diffusion_reference, ego, kRefHorizon, kDt, tracking_start_idx,
       &diffusion_reference_chord_length_s);
-    if (active_kinematic_limits.max_velocity) {
+    if (active_kinematic_limits.max_velocity && !kinematic_limit_stop_profile_active) {
       for (auto & sample : prepared_reference) {
         sample.velocity = std::clamp(sample.velocity, 0.0F, *active_kinematic_limits.max_velocity);
       }

@@ -153,6 +153,31 @@ std::vector<ReferenceSample> buildReferenceHorizon(
   return reference;
 }
 
+bool applyKinematicLimitStopProfile(
+  Trajectory & trajectory, const float current_velocity,
+  const FirstOrderDubinsMppiKinematicLimits & limits, const float dt)
+{
+  if (
+    trajectory.points.empty() || !limits.max_velocity || !limits.min_longitudinal_acceleration ||
+    !std::isfinite(current_velocity) || !std::isfinite(*limits.max_velocity) ||
+    !std::isfinite(*limits.min_longitudinal_acceleration) || !std::isfinite(dt) ||
+    *limits.max_velocity < 0.0F || *limits.max_velocity >= current_velocity ||
+    *limits.min_longitudinal_acceleration >= 0.0F || dt <= 0.0F) {
+    return false;
+  }
+
+  const float minimum_acceleration = *limits.min_longitudinal_acceleration;
+  float previous_velocity = current_velocity;
+  for (std::size_t i = 0; i < trajectory.points.size(); ++i) {
+    const float elapsed_time = static_cast<float>(i + 1U) * dt;
+    const float velocity = std::max(0.0F, current_velocity + minimum_acceleration * elapsed_time);
+    trajectory.points[i].longitudinal_velocity_mps = velocity;
+    trajectory.points[i].acceleration_mps2 = previous_velocity > 0.0F ? minimum_acceleration : 0.0F;
+    previous_velocity = velocity;
+  }
+  return true;
+}
+
 float computeMengerCurvatureWithMinChord(
   const std::vector<autoware_planning_msgs::msg::TrajectoryPoint> & points,
   const std::size_t target_idx, const float min_chord_length_m) noexcept

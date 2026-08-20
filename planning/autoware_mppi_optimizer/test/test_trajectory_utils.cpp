@@ -153,6 +153,40 @@ TEST(ReferenceHorizon, EmptyInputHoldsTheMeasuredEgoState)
   }
 }
 
+TEST(KinematicLimitStopProfile, UsesConstantMinimumAccelerationUntilZeroVelocity)
+{
+  auto trajectory = makeTrajectory(30U, 1.0, 9.0F);
+  FirstOrderDubinsMppiKinematicLimits limits;
+  limits.max_velocity = 4.0F;
+  limits.min_longitudinal_acceleration = -2.0F;
+  limits.max_longitudinal_acceleration = 1.0F;
+
+  ASSERT_TRUE(applyKinematicLimitStopProfile(trajectory, 5.0F, limits, 0.1F));
+  ASSERT_EQ(trajectory.points.size(), 30U);
+  EXPECT_NEAR(trajectory.points[0].longitudinal_velocity_mps, 4.8F, 1.0E-6F);
+  EXPECT_FLOAT_EQ(trajectory.points[0].acceleration_mps2, -2.0F);
+  EXPECT_NEAR(trajectory.points[23].longitudinal_velocity_mps, 0.2F, 1.0E-5F);
+  EXPECT_FLOAT_EQ(trajectory.points[23].acceleration_mps2, -2.0F);
+  EXPECT_FLOAT_EQ(trajectory.points[24].longitudinal_velocity_mps, 0.0F);
+  EXPECT_FLOAT_EQ(trajectory.points[24].acceleration_mps2, -2.0F);
+  EXPECT_FLOAT_EQ(trajectory.points[25].longitudinal_velocity_mps, 0.0F);
+  EXPECT_FLOAT_EQ(trajectory.points[25].acceleration_mps2, 0.0F);
+  EXPECT_FLOAT_EQ(trajectory.points.back().longitudinal_velocity_mps, 0.0F);
+  EXPECT_FLOAT_EQ(trajectory.points.back().acceleration_mps2, 0.0F);
+}
+
+TEST(KinematicLimitStopProfile, LeavesProfileUnchangedWhenCurrentVelocityIsWithinLimit)
+{
+  auto trajectory = makeTrajectory(3U, 1.0, 3.0F);
+  const auto original = trajectory;
+  FirstOrderDubinsMppiKinematicLimits limits;
+  limits.max_velocity = 5.0F;
+  limits.min_longitudinal_acceleration = -2.0F;
+
+  EXPECT_FALSE(applyKinematicLimitStopProfile(trajectory, 5.0F, limits, 0.1F));
+  EXPECT_TRUE(trajectory == original);
+}
+
 TEST(CumulativeChordLength, AccumulatesPolylineSegmentLengthsByIndex)
 {
   Trajectory trajectory;
