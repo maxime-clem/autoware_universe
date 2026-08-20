@@ -11,6 +11,9 @@ endif()
 set(TEMPORAL_MODEL kinematic_bicycle_temporal)
 set(GEN_DIR "${CMAKE_CURRENT_BINARY_DIR}/c_generated_code")
 
+# Always-emitted core sources + optional nonlinear-constraint sources (present when NH > 0).
+# Missing constraint files are stubbed after codegen so this list stays NH-agnostic and
+# parallel builds do not race on absent OUTPUTs.
 set(GENERATED_TEMPORAL_MPC_FILES
   ${GEN_DIR}/acados_solver_${TEMPORAL_MODEL}.h
   ${GEN_DIR}/acados_solver_${TEMPORAL_MODEL}.c
@@ -20,6 +23,8 @@ set(GENERATED_TEMPORAL_MPC_FILES
   ${GEN_DIR}/${TEMPORAL_MODEL}_model/${TEMPORAL_MODEL}_model.h
   ${GEN_DIR}/${TEMPORAL_MODEL}_constraints/${TEMPORAL_MODEL}_constr_h_fun.c
   ${GEN_DIR}/${TEMPORAL_MODEL}_constraints/${TEMPORAL_MODEL}_constr_h_fun_jac_uxt_zt.c
+  ${GEN_DIR}/${TEMPORAL_MODEL}_constraints/${TEMPORAL_MODEL}_constr_h_0_fun.c
+  ${GEN_DIR}/${TEMPORAL_MODEL}_constraints/${TEMPORAL_MODEL}_constr_h_0_fun_jac_uxt_zt.c
 )
 
 # CRITICAL: Mark files as generated so CMake knows to wait for them
@@ -38,10 +43,15 @@ add_custom_command(
   COMMAND ${CMAKE_COMMAND} -E env ${_env_vars}
     ${ACADOS_SOURCE_DIR}/.venv/bin/python3
     ${CMAKE_CURRENT_SOURCE_DIR}/generators/path_tracking_mpc_temporal.py
+  COMMAND ${CMAKE_COMMAND}
+    -DGEN_DIR=${GEN_DIR}
+    -DTEMPORAL_MODEL=${TEMPORAL_MODEL}
+    -P ${CMAKE_CURRENT_SOURCE_DIR}/cmake/ensure_optional_acados_sources.cmake
   WORKING_DIRECTORY ${CMAKE_CURRENT_BINARY_DIR}
   DEPENDS
     ${CMAKE_CURRENT_SOURCE_DIR}/generators/path_tracking_mpc_temporal.py
     ${CMAKE_CURRENT_SOURCE_DIR}/generators/bicycle_model_temporal.py
+    ${CMAKE_CURRENT_SOURCE_DIR}/cmake/ensure_optional_acados_sources.cmake
   COMMENT "Generating acados MPC solver code"
 )
 
@@ -51,13 +61,14 @@ add_custom_target(generate_acados_code_temporal DEPENDS ${GENERATED_TEMPORAL_MPC
 # 4. acados_interface_temporal library
 add_library(acados_interface_temporal SHARED
   ${CMAKE_CURRENT_SOURCE_DIR}/src/acados_interface.cpp
+  ${CMAKE_CURRENT_SOURCE_DIR}/src/path_tracking_solver.cpp
   ${GENERATED_TEMPORAL_MPC_FILES}
 )
 
 # Ensure the library waits for the generator to finish
 add_dependencies(acados_interface_temporal generate_acados_code_temporal)
 
-# Binary dir contains generated headers; the package include dir contains the public interface.
+# Binary dir contains generated headers; the package include dir contains the public interfaces.
 target_include_directories(acados_interface_temporal PUBLIC
   $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}/../../include>
   $<BUILD_INTERFACE:${CMAKE_CURRENT_BINARY_DIR}>
@@ -68,6 +79,9 @@ target_include_directories(acados_interface_temporal PUBLIC
   ${ACADOS_SOURCE_DIR}/include/blasfeo/include
   ${ACADOS_SOURCE_DIR}/include/hpipm/include
 )
+
+# Public consumer API (no generated acados headers).
+target_compile_features(acados_interface_temporal PUBLIC cxx_std_17)
 
 target_link_libraries(acados_interface_temporal PUBLIC acados)
 

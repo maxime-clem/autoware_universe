@@ -18,7 +18,6 @@
 #include "autoware/avoidance_target_detector/boundary.hpp"
 #include "autoware/avoidance_target_detector/object_filtering.hpp"
 #include "autoware/diffusion_planner/diffusion_planner_core.hpp"
-#include "autoware/diffusion_planner/mppi_utils.hpp"
 #include "autoware/diffusion_planner/utils/planning_factor_utils.hpp"
 #include "autoware/mppi_optimizer/first_order_dubins_mppi_interface.hpp"
 
@@ -181,6 +180,11 @@ private:
     const autoware::mppi_optimizer::FirstOrderDubinsMppiDebug & debug, const std::string & frame_id,
     const rclcpp::Time & stamp);
 
+  /** Publish the selected MPPI trajectory's reconstructed cost components to /diagnostics. */
+  void publish_mppi_cost_diagnostics(
+    const autoware::mppi_optimizer::FirstOrderDubinsMppiDebug & debug, bool was_applied,
+    const rclcpp::Time & stamp);
+
   /** Publish whether MPPI is currently applied to the output trajectory. */
   void publish_mppi_enabled(bool enabled);
 
@@ -234,7 +238,9 @@ private:
     debug_processing_time_pub_{nullptr};
   rclcpp::Publisher<Trajectory>::SharedPtr pub_trajectory_{nullptr};
   rclcpp::Publisher<Trajectory>::SharedPtr pub_mppi_reference_trajectory_{nullptr};
+  rclcpp::Publisher<Trajectory>::SharedPtr pub_mppi_nominal_control_trajectory_{nullptr};
   rclcpp::Publisher<Trajectory>::SharedPtr pub_mppi_optimized_trajectory_{nullptr};
+  rclcpp::Publisher<Trajectory>::SharedPtr pub_mppi_nominal_trajectory_{nullptr};
   rclcpp::Publisher<MarkerArray>::SharedPtr pub_mppi_markers_{nullptr};
   rclcpp::Publisher<std_msgs::msg::Bool>::SharedPtr pub_mppi_enabled_{nullptr};
   rclcpp::Publisher<CandidateTrajectories>::SharedPtr pub_trajectories_{nullptr};
@@ -277,6 +283,7 @@ private:
   VehicleInfo vehicle_info_;
 
   std::unique_ptr<DiagnosticsInterface> diagnostics_inference_;
+  std::unique_ptr<DiagnosticsInterface> diagnostics_mppi_cost_;
   std::shared_ptr<const lanelet::LaneletMap> lanelet_map_ptr_{nullptr};
 
   std::unique_ptr<autoware_utils_system::StopWatch<std::chrono::milliseconds>> stop_watch_ptr_;
@@ -290,8 +297,8 @@ private:
   std::shared_ptr<autoware::avoidance_target_detector::ExtendedRouteHandler>
     extended_route_handler_;
   autoware::avoidance_target_detector::TrackedObjectSelector object_selector_;
-  RoadBorderRtree road_border_rtree_;
-  DrivableAreaRtree drivable_area_rtree_;
+  double mppi_object_filter_margin_m_{0.0};
+  double mppi_object_filter_additional_prediction_horizon_s_{0.0};
   HADMapBin lanelet_map_msg_;
   LaneletRoute prev_route_;
 };

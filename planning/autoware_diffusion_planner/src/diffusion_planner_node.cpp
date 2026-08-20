@@ -16,9 +16,11 @@
 
 #include "autoware/diffusion_planner/constants.hpp"
 #include "autoware/diffusion_planner/dimensions.hpp"
+#include "autoware/diffusion_planner/mppi_utils.hpp"
 #include "autoware/diffusion_planner/preprocessing/preprocessing_utils.hpp"
 #include "autoware/diffusion_planner/utils/marker_utils.hpp"
 #include "autoware/diffusion_planner/utils/utils.hpp"
+#include "autoware/mppi_optimizer/detail/trajectory_utils.hpp"
 #include "autoware/mppi_optimizer/first_order_dubins_mppi_cost_params_ros.hpp"
 #include "autoware/mppi_optimizer/first_order_dubins_mppi_runtime_options_ros.hpp"
 #include "autoware/mppi_optimizer/first_order_dubins_mppi_vehicle_params_ros.hpp"
@@ -29,6 +31,7 @@
 
 #include <algorithm>
 #include <array>
+#include <cmath>
 #include <cstddef>
 #include <fstream>
 #include <functional>
@@ -89,8 +92,12 @@ DiffusionPlanner::DiffusionPlanner(const rclcpp::NodeOptions & options)
   pub_trajectory_ = this->create_publisher<Trajectory>("~/output/trajectory", 1);
   pub_mppi_reference_trajectory_ =
     this->create_publisher<Trajectory>("~/debug/mppi/reference_trajectory", 1);
+  pub_mppi_nominal_control_trajectory_ =
+    this->create_publisher<Trajectory>("~/debug/mppi/nominal_control_trajectory", 1);
   pub_mppi_optimized_trajectory_ =
     this->create_publisher<Trajectory>("~/debug/mppi/optimized_trajectory", 1);
+  pub_mppi_nominal_trajectory_ =
+    this->create_publisher<Trajectory>("~/debug/mppi/nominal_trajectory", 1);
   pub_mppi_markers_ = this->create_publisher<MarkerArray>("~/debug/mppi/markers", 1);
   // Latched so late-joining debug tools see the current enable state immediately.
   pub_mppi_enabled_ = this->create_publisher<std_msgs::msg::Bool>(
@@ -145,6 +152,7 @@ DiffusionPlanner::DiffusionPlanner(const rclcpp::NodeOptions & options)
       this, "diffusion_planner");
 
   diagnostics_inference_ = std::make_unique<DiagnosticsInterface>(this, "inference_status");
+  diagnostics_mppi_cost_ = std::make_unique<DiagnosticsInterface>(this, "mppi_cost_breakdown");
   try {
     load_model();
     if (params_.build_only) {
@@ -635,10 +643,12 @@ void DiffusionPlanner::on_timer()
     stop_watch_ptr_->tic("mppi_optimizer");
     if (!mppi_optimizer_ || prev_route_.header.stamp != core_->get_route()->header.stamp) {
       mppi_optimizer_ = std::make_unique<autoware::mppi_optimizer::FirstOrderDubinsMppiInterface>();
-      mppi_optimizer_->setCostParams(
-        autoware::mppi_optimizer::get_first_order_dubins_mppi_cost_params(*this));
-      mppi_optimizer_->setVehicleParams(
-        autoware::mppi_optimizer::get_first_order_dubins_mppi_vehicle_params(*this));
+      const auto cost_params =
+        autoware::mppi_optimizer::get_first_order_dubins_mppi_cost_params(*this);
+      mppi_optimizer_->setCostParams(cost_params);
+      const auto vehicle_params =
+        autoware::mppi_optimizer::get_first_order_dubins_mppi_vehicle_params(*this);
+      mppi_optimizer_->setVehicleParams(vehicle_params);
       mppi_optimizer_->setRuntimeOptions(
         autoware::mppi_optimizer::get_first_order_dubins_mppi_runtime_options(*this));
       prev_route_ = *core_->get_route();
@@ -646,10 +656,25 @@ void DiffusionPlanner::on_timer()
         std::make_shared<autoware::avoidance_target_detector::ExtendedRouteHandler>(
           lanelet_map_msg_, prev_route_);
       extended_route_handler_->create_map();
-      const auto road_borders = extended_route_handler_->get_road_borders();
-      road_border_rtree_ = prepare_road_border_rtree(road_borders);
-      drivable_area_rtree_ =
-        prepare_drivable_area_rtree(extended_route_handler_->get_extended_route_bounds());
+      const double max_longitudinal_offset = std::max(
+        std::abs(vehicle_info_.min_longitudinal_offset_m),
+        std::abs(vehicle_info_.max_longitudinal_offset_m));
+      const double max_lateral_offset = std::max(
+        std::abs(vehicle_info_.min_lateral_offset_m), std::abs(vehicle_info_.max_lateral_offset_m));
+      // Cover both the hard validator's axis-expanded OBB and the optimizer's Euclidean barrier
+      // envelope so the circular prefilter cannot discard an object relevant to either check.
+      const double collision_envelope_radius = std::hypot(
+        max_longitudinal_offset + cost_params.obstacle_collision_margin,
+        max_lateral_offset + cost_params.obstacle_collision_margin);
+      const double barrier_envelope_radius =
+        std::hypot(max_longitudinal_offset, max_lateral_offset) + cost_params.obstacle_safe_margin;
+      mppi_object_filter_margin_m_ = std::max(collision_envelope_radius, barrier_envelope_radius);
+      const double max_vehicle_delay_s =
+        std::max(vehicle_params.acc_time_delay, vehicle_params.steer_time_delay);
+      const double delay_steps =
+        std::max(0.0, std::round(max_vehicle_delay_s / autoware::mppi_optimizer::detail::kMppiDt));
+      mppi_object_filter_additional_prediction_horizon_s_ =
+        delay_steps * autoware::mppi_optimizer::detail::kMppiDt;
     }
 
     try {
@@ -662,25 +687,31 @@ void DiffusionPlanner::on_timer()
       const std::optional<SteeringReport> ego_steering =
         steering_status ? std::make_optional(*steering_status) : std::nullopt;
 
+      const auto objects_in_range = autoware::avoidance_target_detector::filter_objects_in_range(
+        *objects, planner_output.trajectory, mppi_object_filter_margin_m_,
+        mppi_object_filter_additional_prediction_horizon_s_);
       object_selector_.update_objects(
-        now(), *objects, planner_output.trajectory, *extended_route_handler_);
+        now(), objects_in_range, planner_output.trajectory, *extended_route_handler_);
       auto avoidance_targets = object_selector_.get_avoidance_targets(
-        *objects, planner_output.trajectory, extended_route_handler_->get_extended_route_bounds());
-      const auto driving_along_targets = object_selector_.get_driving_along_vehicles(*objects);
+        objects_in_range, planner_output.trajectory,
+        extended_route_handler_->get_extended_route_bounds());
+      const auto driving_along_targets =
+        object_selector_.get_driving_along_vehicles(objects_in_range);
 
       const auto margin = vehicle_info_.max_longitudinal_offset_m + 1.0;
-      const auto road_borders_subset =
-        get_road_border_subset(road_border_rtree_, planner_output.trajectory, margin);
-      const auto drivable_area_subset =
-        get_drivable_area_subset(drivable_area_rtree_, planner_output.trajectory, margin);
 
       auto all_targets = avoidance_targets;
       all_targets.objects.insert(
         all_targets.objects.end(), driving_along_targets.objects.begin(),
         driving_along_targets.objects.end());
+      const auto road_borders_subset = extended_route_handler_->get_road_borders_around_trajectory(
+        planner_output.trajectory, margin);
+      const auto drivable_area_subset =
+        extended_route_handler_->get_drivable_area_around_trajectory(
+          planner_output.trajectory, margin);
       const auto mppi_result = mppi_optimizer_->optimizeTrajectory(
         planner_output.trajectory, frame_context->ego_kinematic_state, ego_acceleration_for_mppi,
-        ego_steering, avoidance_targets, to_mppi_segments(road_borders_subset),
+        ego_steering, all_targets, to_mppi_segments(road_borders_subset),
         to_mppi_segments(drivable_area_subset));
       pub_mppi_markers_->publish(
         autoware::mppi_optimizer::createMppiDebugMarkers(
@@ -688,11 +719,12 @@ void DiffusionPlanner::on_timer()
           driving_along_targets, frame_context->ego_kinematic_state.pose.pose.position.z));
       record_section_time(
         *stop_watch_ptr_, "mppi_optimizer/optimize_trajectory", *diagnostics_inference_);
-      const bool apply_mppi = !params_.shadow_mode;
+      const bool apply_mppi = !params_.shadow_mode && !mppi_result.debug.was_rejected;
       if (apply_mppi) {
         planner_output.trajectory = mppi_result.trajectory;
       }
       publish_mppi_enabled(apply_mppi);
+      publish_mppi_cost_diagnostics(mppi_result.debug, apply_mppi, frame_time);
 
       autoware_utils_debug::ScopedTimeTrack publish_debug_st(
         "mppi_optimizer/publish_debug", *time_keeper_);
@@ -787,13 +819,83 @@ void DiffusionPlanner::publish_mppi_debug(
   const rclcpp::Time & stamp)
 {
   auto reference = debug.reference_trajectory;
+  auto nominal_control = debug.reference_trajectory;
   auto optimized = debug.optimized_trajectory;
+  auto nominal = debug.nominal_trajectory;
   reference.header.stamp = stamp;
   reference.header.frame_id = frame_id;
+  nominal_control.header = reference.header;
   optimized.header = reference.header;
+  nominal.header = reference.header;
+
+  const auto & profile = debug.nominal_control_profile;
+  const std::size_t nominal_control_size = std::min(
+    {nominal_control.points.size(), profile.acceleration_commands_mps2.size(),
+     profile.steering_commands_rad.size()});
+  nominal_control.points.resize(nominal_control_size);
+  for (std::size_t i = 0; i < nominal_control_size; ++i) {
+    nominal_control.points[i].acceleration_mps2 = profile.acceleration_commands_mps2[i];
+    nominal_control.points[i].front_wheel_angle_rad = profile.steering_commands_rad[i];
+  }
 
   pub_mppi_reference_trajectory_->publish(reference);
+  pub_mppi_nominal_control_trajectory_->publish(nominal_control);
   pub_mppi_optimized_trajectory_->publish(optimized);
+  pub_mppi_nominal_trajectory_->publish(nominal);
+}
+
+void DiffusionPlanner::publish_mppi_cost_diagnostics(
+  const autoware::mppi_optimizer::FirstOrderDubinsMppiDebug & debug, const bool was_applied,
+  const rclcpp::Time & stamp)
+{
+  diagnostics_mppi_cost_->clear();
+  const auto & cost = debug.cost_breakdown;
+  diagnostics_mppi_cost_->add_key_value("controller_baseline_cost", debug.baseline_cost);
+  diagnostics_mppi_cost_->add_key_value("output_total_cost", cost.total);
+  diagnostics_mppi_cost_->add_key_value(
+    "output_minus_baseline_cost", cost.total - debug.baseline_cost);
+  diagnostics_mppi_cost_->add_key_value("running_total", cost.running_total);
+  diagnostics_mppi_cost_->add_key_value("terminal_total", cost.terminal_total);
+  diagnostics_mppi_cost_->add_key_value("evaluated_timesteps", cost.evaluated_timesteps);
+  diagnostics_mppi_cost_->add_key_value("state/speed", cost.speed);
+  diagnostics_mppi_cost_->add_key_value("state/track", cost.track);
+  diagnostics_mppi_cost_->add_key_value("state/heading", cost.heading);
+  diagnostics_mppi_cost_->add_key_value("state/lateral_distance", cost.lateral_distance);
+  diagnostics_mppi_cost_->add_key_value("state/lateral_yaw_error", cost.lateral_yaw_error);
+  diagnostics_mppi_cost_->add_key_value("state/track_center", cost.track_center);
+  diagnostics_mppi_cost_->add_key_value("state/corner_buffer", cost.corner_buffer);
+  diagnostics_mppi_cost_->add_key_value("state/drivable_area", cost.drivable_area);
+  diagnostics_mppi_cost_->add_key_value("state/obstacle", cost.obstacle);
+  diagnostics_mppi_cost_->add_key_value("state/road_border", cost.road_border);
+  diagnostics_mppi_cost_->add_key_value("control/acceleration_command", cost.acceleration_command);
+  diagnostics_mppi_cost_->add_key_value("control/steering_command", cost.steering_command);
+  diagnostics_mppi_cost_->add_key_value("comfort/lateral_acceleration", cost.lateral_acceleration);
+  diagnostics_mppi_cost_->add_key_value("comfort/lateral_jerk", cost.lateral_jerk);
+  diagnostics_mppi_cost_->add_key_value("comfort/longitudinal_jerk", cost.longitudinal_jerk);
+  diagnostics_mppi_cost_->add_key_value("comfort/steering_rate", cost.steering_rate);
+  diagnostics_mppi_cost_->add_key_value(
+    "validation_reason", autoware::mppi_optimizer::to_string(debug.validation.reasons));
+  diagnostics_mppi_cost_->add_key_value(
+    "first_invalid_index", debug.validation.first_invalid_index
+                             ? std::to_string(debug.validation.first_invalid_index.value())
+                             : std::string{"none"});
+  diagnostics_mppi_cost_->add_key_value("was_rejected", debug.was_rejected);
+  diagnostics_mppi_cost_->add_key_value("was_applied", was_applied);
+
+  if (cost.evaluated_timesteps == 0U) {
+    diagnostics_mppi_cost_->update_level_and_message(
+      DiagnosticStatus::STALE, "MPPI optimization skipped");
+  } else if (!std::isfinite(cost.total) || !std::isfinite(debug.baseline_cost)) {
+    diagnostics_mppi_cost_->update_level_and_message(
+      DiagnosticStatus::ERROR, "Non-finite MPPI cost");
+  } else if (debug.was_rejected) {
+    diagnostics_mppi_cost_->update_level_and_message(
+      DiagnosticStatus::WARN, "MPPI trajectory rejected");
+  } else {
+    diagnostics_mppi_cost_->update_level_and_message(
+      DiagnosticStatus::OK, was_applied ? "MPPI trajectory applied" : "MPPI shadow output");
+  }
+  diagnostics_mppi_cost_->publish(stamp);
 }
 
 void DiffusionPlanner::publish_planning_factor(const Trajectory & trajectory)

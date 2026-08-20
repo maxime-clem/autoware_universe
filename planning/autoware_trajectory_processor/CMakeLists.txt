@@ -18,12 +18,13 @@ if(NOT _acados_location)
 endif()
 if(_acados_location)
   get_filename_component(_acados_lib_dir "${_acados_location}" DIRECTORY)
-  ament_export_link_flags(-L"${_acados_lib_dir}" -lacados)
+  # Quote each flag as one cmake argument; -L"/path" breaks the generated extras file.
+  ament_export_link_flags("-L${_acados_lib_dir}" "-lacados")
 else()
   # Fallback when acados is not exposed as an imported target (e.g. in-tree)
   set(_acados_lib_dir "$ENV{ACADOS_SOURCE_DIR}/lib")
   if(_acados_lib_dir AND EXISTS "${_acados_lib_dir}")
-    ament_export_link_flags(-L"${_acados_lib_dir}" -lacados)
+    ament_export_link_flags("-L${_acados_lib_dir}" "-lacados")
   endif()
 endif()
 
@@ -162,7 +163,14 @@ if(BUILD_TESTING)
   )
 endif()
 
-install(TARGETS acados_interface_temporal LIBRARY DESTINATION lib)
+install(TARGETS acados_interface_temporal
+  EXPORT export_acados_interface_temporal
+  ARCHIVE DESTINATION lib
+  LIBRARY DESTINATION lib
+  RUNTIME DESTINATION bin
+)
+install(FILES include/temporal_mpt/path_tracking_solver.hpp
+  DESTINATION include/temporal_mpt)
 
 set(TEMPORAL_MODEL "kinematic_bicycle_temporal")
 set(TEMPORAL_GEN_DIR "${CMAKE_CURRENT_BINARY_DIR}/src/acados_mpt/c_generated_code")
@@ -176,8 +184,12 @@ install(FILES
 install(PROGRAMS
   scripts/temporal_mpt_debug_visualizer.py
   scripts/temporal_mpt_python_reference.py
+  scripts/temporal_mpt_offline_retune.py
+  scripts/temporal_mpt_offline_tuner.py
   DESTINATION lib/${PROJECT_NAME}
 )
+
+ament_export_targets(export_acados_interface_temporal HAS_LIBRARY_TARGET)
 
 ament_auto_package(
   INSTALL_TO_SHARE

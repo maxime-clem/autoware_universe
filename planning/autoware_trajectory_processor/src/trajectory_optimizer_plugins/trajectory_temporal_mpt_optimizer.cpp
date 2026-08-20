@@ -14,6 +14,7 @@
 
 #include "autoware/trajectory_processor/trajectory_optimizer_plugins/trajectory_temporal_mpt_optimizer.hpp"
 
+#include <autoware_vehicle_info_utils/vehicle_info_utils.hpp>
 #include <rclcpp/logging.hpp>
 
 #include <autoware_planning_msgs/msg/trajectory.hpp>
@@ -64,11 +65,8 @@ TrajectoryPoints trajectory_from_solution_overlay(
     p.pose.orientation.z = q.z();
     p.pose.orientation.w = q.w();
     p.longitudinal_velocity_mps = static_cast<float>(std::max(0.0, solution.xtraj[i][3]));
-    const size_t uk = std::min(i, static_cast<size_t>(temporal_mpt::N) - 1);
-    p.front_wheel_angle_rad = static_cast<float>(solution.utraj[uk][1]);
-    if (i < static_cast<size_t>(temporal_mpt::N)) {
-      p.acceleration_mps2 = static_cast<float>(solution.utraj[i][0]);
-    }
+    p.acceleration_mps2 = static_cast<float>(solution.xtraj[i][4]);
+    p.front_wheel_angle_rad = static_cast<float>(solution.xtraj[i][5]);
     out.push_back(std::move(p));
   }
   if (out.size() >= 2) {
@@ -98,6 +96,10 @@ void TrajectoryTemporalMPTOptimizer::set_mpt_params(
 {
   mpt_params_.min_points_for_optimization =
     static_cast<size_t>(std::max<int64_t>(2, params.min_points_for_optimization));
+  mpt_params_.tau_a = std::max(1.0e-4, params.acc_time_constant);
+  mpt_params_.tau_d = std::max(1.0e-4, params.steer_time_constant);
+  mpt_params_.max_steer_rate = std::max(1.0e-6, params.max_steer_rate);
+  mpt_params_.use_previous_solution_warm_start = params.use_previous_solution_warm_start;
   mpt_params_.enable_debug_info = params.enable_debug_info;
   mpt_params_.publish_debug_topics = params.publish_debug_topics;
   mpt_params_.write_replay_fixture = params.write_replay_fixture;
@@ -116,11 +118,23 @@ void TrajectoryTemporalMPTOptimizer::on_initialize(const TrajectoryProcessorPara
   enabled_ = params.use_temporal_mpt_optimizer;
   set_mpt_params(params.trajectory_temporal_mpt_optimizer);
 
-  mpt_params_.lf = 1.0;
-  mpt_params_.lr = 1.0;
+  // Bicycle lf/lr from vehicle_info: CG at geometric box center (same as MPPI
+  // ego_axle_to_box_center).
+  {
+    const auto vehicle_info =
+      autoware::vehicle_info_utils::VehicleInfoUtils(*node_ptr).getVehicleInfo();
+    const double wb = std::max(1.0e-3, vehicle_info.wheel_base_m);
+    double lr = 0.5 * vehicle_info.vehicle_length_m - vehicle_info.rear_overhang_m;
+    lr = std::clamp(lr, 1.0e-3, wb - 1.0e-3);
+    mpt_params_.lr = lr;
+    mpt_params_.lf = wb - lr;
+  }
   RCLCPP_INFO(
-    node_ptr->get_logger(), "Temporal MPT: bicycle lf=%.3f m lr=%.3f m (Python reference default)",
-    mpt_params_.lf, mpt_params_.lr);
+    node_ptr->get_logger(),
+    "Temporal MPT: lf=%.3f m lr=%.3f m tau_a=%.3f s tau_d=%.3f s max_steer_rate=%.3f rad/s",
+    mpt_params_.lf, mpt_params_.lr, mpt_params_.tau_a, mpt_params_.tau_d,
+    mpt_params_.max_steer_rate);
+
   if (mpt_params_.write_replay_fixture && !mpt_params_.replay_fixture_directory.empty()) {
     RCLCPP_INFO(
       node_ptr->get_logger(),
@@ -134,8 +148,12 @@ void TrajectoryTemporalMPTOptimizer::on_initialize(const TrajectoryProcessorPara
 
 void TrajectoryTemporalMPTOptimizer::update_params(const TrajectoryProcessorParams & params)
 {
+  const bool warm_start_was_enabled = mpt_params_.use_previous_solution_warm_start;
   enabled_ = params.use_temporal_mpt_optimizer;
   set_mpt_params(params.trajectory_temporal_mpt_optimizer);
+  if (warm_start_was_enabled && !mpt_params_.use_previous_solution_warm_start) {
+    have_prev_solution_ = false;
+  }
 }
 
 ProcessingResult TrajectoryTemporalMPTOptimizer::process(
@@ -160,14 +178,20 @@ ProcessingResult TrajectoryTemporalMPTOptimizer::process(
 
   const TrajectoryPoints reference_snapshot = traj_points;
 
-  const std::array<double, temporal_mpt::NP> model_params = {mpt_params_.lf, mpt_params_.lr};
+  const std::array<double, temporal_mpt::NP> model_params = {
+    mpt_params_.lf, mpt_params_.lr, mpt_params_.tau_a, mpt_params_.tau_d};
   acados_interface_->setParametersAllStages(model_params);
+  acados_interface_->setSteerRateLimit(mpt_params_.max_steer_rate);
 
-  // Initial state from the first incoming trajectory point (kinematic bicycle: x, y, psi, v).
+  // Initial state: pose/speed from traj[0]; applied a/δ from that point (or 0).
   const auto & p0 = traj_points.front();
   const std::array<double, temporal_mpt::NX> x0 = {
-    p0.pose.position.x, p0.pose.position.y, tf2::getYaw(p0.pose.orientation),
-    std::max(0.0, static_cast<double>(p0.longitudinal_velocity_mps))};
+    p0.pose.position.x,
+    p0.pose.position.y,
+    tf2::getYaw(p0.pose.orientation),
+    std::max(0.0, static_cast<double>(p0.longitudinal_velocity_mps)),
+    static_cast<double>(p0.acceleration_mps2),
+    static_cast<double>(p0.front_wheel_angle_rad)};
 
   // Horizon references use the incoming trajectory as a **time-ordered discrete sequence** (planner
   // sample period is implicit in the message): start_idx = index closest to x0 (typically 0 when x0
@@ -201,14 +225,12 @@ ProcessingResult TrajectoryTemporalMPTOptimizer::process(
   const double x_off = x0[0];
   const double y_off = x0[1];
 
-  // LINEAR_LS yref: [x, y, psi, v, a_ref, delta_ref] per path_tracking_mpc_temporal. Stage 0 uses
-  // x0 for the state part so the running cost matches the fixed initial state. Stages k>=1 and
-  // terminal use longitudinal_velocity_mps from the sampled trajectory point (non-negative).
+  // World-frame yref [x,y,psi,v,a,δ,a_cmd,δ_cmd]. Path-frame Vx rotates x,y.
   const size_t max_k = temporal_mpt::N;
   for (size_t k = 0; k < max_k; ++k) {
     if (k == 0) {
-      const std::array<double, temporal_mpt::NY> yref = {x0[0] - x_off, x0[1] - y_off, x0[2],
-                                                         x0[3],         0.0,           0.0};
+      const std::array<double, temporal_mpt::NY> yref = {x0[0] - x_off, x0[1] - y_off, x0[2], x0[3],
+                                                         x0[4],         x0[5],         0.0,   0.0};
       acados_interface_->setStageReference(static_cast<int>(k), yref);
       continue;
     }
@@ -217,7 +239,7 @@ ProcessingResult TrajectoryTemporalMPTOptimizer::process(
     const double yaw = tf2::getYaw(p.pose.orientation) + psi_bias;
     const double v_ref = std::max(0.0, static_cast<double>(p.longitudinal_velocity_mps));
     const std::array<double, temporal_mpt::NY> yref = {
-      p.pose.position.x - x_off, p.pose.position.y - y_off, yaw, v_ref, 0.0, 0.0};
+      p.pose.position.x - x_off, p.pose.position.y - y_off, yaw, v_ref, 0.0, 0.0, 0.0, 0.0};
     acados_interface_->setStageReference(static_cast<int>(k), yref);
   }
 
@@ -228,10 +250,31 @@ ProcessingResult TrajectoryTemporalMPTOptimizer::process(
     std::max(0.0, static_cast<double>(terminal_point.longitudinal_velocity_mps));
   acados_interface_->setTerminalReference(
     {terminal_point.pose.position.x - x_off, terminal_point.pose.position.y - y_off, terminal_yaw,
-     terminal_v_ref});
+     terminal_v_ref, 0.0, 0.0});
 
-  const std::array<double, temporal_mpt::NX> x0_local = {
-    x0[0] - x_off, x0[1] - y_off, x0[2], x0[3]};
+  const std::array<double, temporal_mpt::NX> x0_local = {x0[0] - x_off, x0[1] - y_off, x0[2],
+                                                         x0[3],         x0[4],         x0[5]};
+
+  // Receding-horizon warm-start from previous successful solve (shifted by one stage).
+  if (mpt_params_.use_previous_solution_warm_start && have_prev_solution_) {
+    std::array<std::array<double, temporal_mpt::NX>, temporal_mpt::N + 1> x_guess{};
+    std::array<std::array<double, temporal_mpt::NU>, temporal_mpt::N> u_guess{};
+    for (size_t k = 0; k < temporal_mpt::N; ++k) {
+      const size_t src = std::min(k + 1, temporal_mpt::N - 1);
+      u_guess[k] = prev_u_[src];
+    }
+    x_guess[0] = x0_local;
+    for (size_t k = 1; k <= temporal_mpt::N; ++k) {
+      const size_t src = std::min(k + 1, temporal_mpt::N);
+      auto xw = prev_x_world_[src];
+      xw[0] -= x_off;
+      xw[1] -= y_off;
+      x_guess[k] = xw;
+    }
+    acados_interface_->setWarmStartTrajectory(x_guess, u_guess);
+  } else {
+    acados_interface_->setWarmStart(x0_local, {0.0, 0.0});
+  }
 
   auto solution = acados_interface_->getControl(x0_local);
 
@@ -291,6 +334,11 @@ ProcessingResult TrajectoryTemporalMPTOptimizer::process(
         get_node_ptr()->get_logger(), *get_node_ptr()->get_clock(), 2000,
         "Temporal MPT acados solve succeeded with status %d", solution.status);
     }
+    if (mpt_params_.use_previous_solution_warm_start) {
+      prev_u_ = solution.utraj;
+      prev_x_world_ = solution.xtraj;
+      have_prev_solution_ = true;
+    }
   }
 
   // When reroute_output is true, write the optimized state to a copy only (debug topics) and
@@ -314,15 +362,8 @@ ProcessingResult TrajectoryTemporalMPTOptimizer::process(
     p.pose.orientation.z = q.z();
     p.pose.orientation.w = q.w();
     p.longitudinal_velocity_mps = std::max(0.0, solution.xtraj[i][3]);
-    {
-      const size_t uk = std::min(i, static_cast<size_t>(temporal_mpt::N) - 1);
-      p.front_wheel_angle_rad = static_cast<float>(solution.utraj[uk][1]);
-    }
-    // Model controls: u[0] = longitudinal acceleration, u[1] = steering angle (see
-    // bicycle_model_temporal).
-    if (i < static_cast<size_t>(temporal_mpt::N)) {
-      p.acceleration_mps2 = static_cast<float>(solution.utraj[i][0]);
-    }
+    p.acceleration_mps2 = static_cast<float>(solution.xtraj[i][4]);
+    p.front_wheel_angle_rad = static_cast<float>(solution.xtraj[i][5]);
   }
 
   if (mpt_params_.publish_debug_topics) {
@@ -347,10 +388,10 @@ void TrajectoryTemporalMPTOptimizer::write_temporal_mpt_replay_fixture(
   body
     << "# example_trajectory_file_xyv.py: python3 generators/example_trajectory_file_xyv.py \\\n";
   body << "#   --reference-file <this_file> --N " << temporal_mpt::N << " --dt 0.1\n";
-  body << "# x0: x[m] y[m] yaw[rad] v[m/s]; then x, y, yaw[rad], v_ref[m/s] per line (plugin "
-          "input).\n";
+  body << "# x0: x[m] y[m] yaw[rad] v[m/s] a[m/s^2] delta[rad]; then x,y,yaw,v_ref per line.\n";
   body << std::setprecision(std::numeric_limits<double>::max_digits10);
-  body << "x0: " << x0[0] << " " << x0[1] << " " << x0[2] << " " << x0[3] << "\n";
+  body << "x0: " << x0[0] << " " << x0[1] << " " << x0[2] << " " << x0[3] << " " << x0[4] << " "
+       << x0[5] << "\n";
   for (const auto & p : reference_trajectory) {
     const double pyaw = tf2::getYaw(p.pose.orientation);
     const double v_ref = std::max(0.0, static_cast<double>(p.longitudinal_velocity_mps));
@@ -401,6 +442,7 @@ void TrajectoryTemporalMPTOptimizer::write_temporal_mpt_replay_fixture(
 void TrajectoryTemporalMPTOptimizer::create_or_reset_solver()
 {
   acados_interface_ = std::make_unique<temporal_mpt::AcadosInterface>();
+  have_prev_solution_ = false;
 }
 
 void TrajectoryTemporalMPTOptimizer::ensure_debug_publishers()

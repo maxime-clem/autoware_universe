@@ -18,12 +18,12 @@ from acados_template import AcadosOcpSolver
 from generators.bicycle_model_temporal import bicycle_model_temporal
 import numpy as np
 
-# Symmetric bound on lateral acceleration a_lat = v^2 * K [m/s^2], K = cos(beta_slip)*tan(delta)/L.
-A_LAT_MAX_MPS2 = 1.2
-
 
 class PathTrackingMPCTemporal:
-    """Temporal MPC: states x,y,psi,v; inputs a, delta (direct steering). Set yref / yref_e per solve."""
+    """Temporal MPC: first-order Dubins (MPPI plant without delay FIFOs).
+
+    States x,y,psi,v,a,delta; inputs a_cmd, delta_cmd. Set yref / yref_e per solve.
+    """
 
     def __init__(self, Tf, N, build=True, generate=True):
         self.Tf = Tf
@@ -45,6 +45,8 @@ class PathTrackingMPCTemporal:
         model_ac.p = model.p
         if hasattr(model, "con_h_expr"):
             model_ac.con_h_expr = model.con_h_expr
+        if hasattr(model, "con_h_expr_0"):
+            model_ac.con_h_expr_0 = model.con_h_expr_0
         model_ac.name = model.name
         ocp.model = model_ac
 
@@ -57,14 +59,16 @@ class PathTrackingMPCTemporal:
 
         ocp.solver_options.N_horizon = self.N
 
-        Q = np.diag([5.0e-1, 5.0e-1, 3.5e-2, 1.0e-1])
-        R = np.diag([2.5e-2, 2e1])
+        # Q: path-frame lon/lat, psi, v, a, delta (qa=qdelta=0 by default)
+        Q = np.diag([2.0e-1, 5.0e0, 5.0e-2, 5.0e-2, 0.0, 0.0])
+        R = np.diag([2.5e-2, 2.0e0])  # a_cmd, delta_cmd
         Qe = 2.5 * Q
 
         ocp.cost.cost_type = "LINEAR_LS"
         ocp.cost.cost_type_e = "LINEAR_LS"
         unscale = self.N / self.Tf
 
+        # Stage residual [e_lon, e_lat, psi, v, a, delta, a_cmd, delta_cmd] once runtime sets Vx.
         ocp.cost.W = unscale * np.block(
             [[Q, np.zeros((Q.shape[0], R.shape[1]))], [np.zeros((R.shape[0], Q.shape[1])), R]]
         )
@@ -85,26 +89,40 @@ class PathTrackingMPCTemporal:
         ocp.cost.yref = np.zeros(ny_st)
         ocp.cost.yref_e = np.zeros(ny_e)
 
+        # Command bounds
         ocp.constraints.lbu = np.array([model.a_min, model.delta_cmd_min])
         ocp.constraints.ubu = np.array([model.a_max, model.delta_cmd_max])
         ocp.constraints.idxbu = np.array([0, 1])
 
+        # Applied actuator state bounds (indices 4=a, 5=delta)
+        ocp.constraints.lbx = np.array([model.a_min, model.delta_min])
+        ocp.constraints.ubx = np.array([model.a_max, model.delta_max])
+        ocp.constraints.idxbx = np.array([4, 5])
+        ocp.constraints.lbx_e = np.array([model.a_min, model.delta_min])
+        ocp.constraints.ubx_e = np.array([model.a_max, model.delta_max])
+        ocp.constraints.idxbx_e = np.array([4, 5])
+
+        # Steer-rate path constraint (stage 0 + intermediate stages)
+        ocp.constraints.lh = np.array([-model.max_steer_rate])
+        ocp.constraints.uh = np.array([model.max_steer_rate])
+        ocp.constraints.lh_0 = np.array([-model.max_steer_rate])
+        ocp.constraints.uh_0 = np.array([model.max_steer_rate])
+
         ocp.constraints.x0 = np.zeros(nx)
 
-        # lh <= h(x,u) <= uh with h = a_lat = v^2 * K (see bicycle_model_temporal.py).
-        ocp.constraints.lh = np.array([-A_LAT_MAX_MPS2])
-        ocp.constraints.uh = np.array([A_LAT_MAX_MPS2])
         n_p = model.p.shape[0]
         ocp.parameter_values = np.zeros(n_p)
-        ocp.parameter_values[0] = 1.0
-        ocp.parameter_values[1] = 1.0
+        ocp.parameter_values[0] = 1.0  # lf
+        ocp.parameter_values[1] = 1.0  # lr
+        ocp.parameter_values[2] = 0.15  # tau_a
+        ocp.parameter_values[3] = 0.08  # tau_d
 
         ocp.solver_options.tf = self.Tf
         ocp.solver_options.qp_solver = "FULL_CONDENSING_HPIPM"
         ocp.solver_options.nlp_solver_type = "SQP"
         ocp.solver_options.hessian_approx = "GAUSS_NEWTON"
-        ocp.solver_options.integrator_type = "ERK"
-        ocp.solver_options.sim_method_num_stages = 4
+        ocp.solver_options.integrator_type = "ERK"  # Forward Euler when num_stages=1
+        ocp.solver_options.sim_method_num_stages = 1
         ocp.solver_options.num_steps = 1
         ocp.solver_options.nlp_solver_max_iter = 100
         ocp.solver_options.tol = 1e-4

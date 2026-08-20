@@ -785,6 +785,32 @@ trajectory_processor_params:
       validation:
         bounds<>: [2, 1000]
       read_only: false
+    acc_time_constant:
+      type: double
+      default_value: 0.15
+      description: First-order acceleration actuator time constant [s].
+      validation:
+        gt<>: [0.0]
+      read_only: false
+    steer_time_constant:
+      type: double
+      default_value: 0.08
+      description: First-order steering actuator time constant [s].
+      validation:
+        gt<>: [0.0]
+      read_only: false
+    max_steer_rate:
+      type: double
+      default_value: 3.0
+      description: Maximum absolute steering rate [rad/s].
+      validation:
+        gt<>: [0.0]
+      read_only: false
+    use_previous_solution_warm_start:
+      type: bool
+      default_value: true
+      description: Warm-start each solve with the previous solution shifted by one stage.
+      read_only: false
     enable_debug_info:
       type: bool
       default_value: false
