@@ -92,7 +92,7 @@ if(CUDA_AVAIL AND TRT_AVAIL)
   )
   target_link_libraries(mppi_temporal_mpt_nominal
     mppi_trajectory_utils
-    autoware_trajectory_processor::acados_interface_temporal
+    ${autoware_trajectory_processor_LIBRARIES}
     rclcpp::rclcpp
     tf2::tf2
     tf2_geometry_msgs::tf2_geometry_msgs

@@ -164,7 +164,6 @@ if(BUILD_TESTING)
 endif()
 
 install(TARGETS acados_interface_temporal
-  EXPORT export_acados_interface_temporal
   ARCHIVE DESTINATION lib
   LIBRARY DESTINATION lib
   RUNTIME DESTINATION bin
@@ -189,7 +188,7 @@ install(PROGRAMS
   DESTINATION lib/${PROJECT_NAME}
 )
 
-ament_export_targets(export_acados_interface_temporal HAS_LIBRARY_TARGET)
+ament_export_libraries(acados_interface_temporal)
 
 ament_auto_package(
   INSTALL_TO_SHARE
