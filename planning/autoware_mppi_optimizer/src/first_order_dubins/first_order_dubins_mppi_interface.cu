@@ -1219,7 +1219,7 @@ struct FirstOrderDubinsMppiInterface::Impl
       if (use_last_control_as_nominal && step_count > 0 && !started_from_stop) {
         seedNominalControlFromLastOptimized();
       } else if (use_temporal_mpt_as_nominal) {
-        seedNominalControlFromTemporalMpt(reference, ego);
+        // seedNominalControlFromTemporalMpt(reference, ego);
       } else {
         seedNominalControlFromDiffusionReference(reference, start_idx);
       }
