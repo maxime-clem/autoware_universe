@@ -15,6 +15,7 @@
 #include "autoware/mppi_optimizer/trajectory_mppi_optimizer.hpp"
 
 #include "autoware/mppi_optimizer/detail/trajectory_utils.hpp"
+#include "autoware/mppi_optimizer/first_order_dubins_mppi_kinematic_limits_conversion.hpp"
 #include "autoware/mppi_optimizer/first_order_dubins_mppi_vehicle_params_conversion.hpp"
 #include "autoware/mppi_optimizer/first_order_dubins_mppi_vehicle_params_ros.hpp"
 #include "autoware/mppi_optimizer/mppi_debug_markers.hpp"
@@ -154,6 +155,10 @@ void TrajectoryMppiOptimizer::on_initialize(
   params_ = param_listener_->get_params();
   declare_first_order_dubins_mppi_vehicle_dynamics_params(*node);
 
+  velocity_limit_sub_ =
+    std::make_shared<autoware_utils_rclcpp::InterProcessPollingSubscriber<VelocityLimit>>(
+      node, "~/input/external_velocity_limit_mps", rclcpp::QoS{1});
+
   reference_trajectory_pub_ =
     node->create_publisher<Trajectory>("~/debug/mppi/reference_trajectory", 1);
   nominal_control_trajectory_pub_ =
@@ -242,9 +247,13 @@ ProcessingResult TrajectoryMppiOptimizer::process(
     const std::optional<autoware_vehicle_msgs::msg::SteeringReport> steering =
       data.current_steering ? std::make_optional(*data.current_steering) : std::nullopt;
 
+    const auto velocity_limit = velocity_limit_sub_->take_data();
+    const auto kinematic_limits =
+      velocity_limit ? makeKinematicLimits(*velocity_limit) : FirstOrderDubinsMppiKinematicLimits{};
+
     const auto result = optimizer_->optimizeTrajectory(
       input, *data.current_odometry, acceleration, steering, all_targets,
-      to_mppi_segments(road_borders), to_mppi_segments(drivable_area));
+      to_mppi_segments(road_borders), to_mppi_segments(drivable_area), kinematic_limits);
 
     pending_debug_ = result.debug;
     pending_debug_header_ = input.header;
