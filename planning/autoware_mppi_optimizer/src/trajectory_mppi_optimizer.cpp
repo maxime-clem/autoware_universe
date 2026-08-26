@@ -392,10 +392,6 @@ ProcessingResult TrajectoryMppiOptimizer::process(
     publish_processing_time(result.debug.timing);
     publish_ego_to_dp_first_point_distance(*data.current_odometry, input);
     publish_ego_signed_lateral_error_on_dp(*data.current_odometry, input);
-    if (result.debug.was_rejected) {
-      pending_markers_.markers.clear();
-      clear_markers(input.header);
-    }
     if (!apply_result) {
       return ProcessingResult::Unchanged;
     }

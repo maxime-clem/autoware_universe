@@ -203,6 +203,7 @@ struct FirstOrderDubinsMppiTiming
 struct FirstOrderDubinsMppiDebug
 {
   Trajectory reference_trajectory;
+  /** MPPI candidate before the optional skip_if_invalid fallback is applied. */
   Trajectory optimized_trajectory;
   /** Open-loop rollout of the seeded u_nom warm-start (accel/steer cmds in a / front_wheel). */
   Trajectory nominal_trajectory;

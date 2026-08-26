@@ -457,7 +457,7 @@ TEST_F(FirstOrderDubinsMppiInterfaceGpuTest, RejectedActiveLimitRetainsLongitudi
   EXPECT_LT(
     result.trajectory.points.back().longitudinal_velocity_mps,
     input.points.back().longitudinal_velocity_mps);
-  EXPECT_TRUE(result.debug.optimized_trajectory == result.trajectory);
+  EXPECT_FALSE(result.debug.optimized_trajectory.points.empty());
 }
 
 TEST_F(FirstOrderDubinsMppiInterfaceGpuTest, AppliesPerChannelActuatorDelayWithoutRefShift)
@@ -498,7 +498,8 @@ TEST_F(FirstOrderDubinsMppiInterfaceGpuTest, RejectsBeyondLateralBoundaryThresho
   EXPECT_TRUE(interface_->isInitialized());
   EXPECT_TRUE(result.trajectory == input);
   EXPECT_TRUE(result.debug.reference_trajectory == input);
-  EXPECT_TRUE(result.debug.optimized_trajectory == input);
+  EXPECT_FALSE(result.debug.optimized_trajectory.points.empty());
+  EXPECT_FALSE(result.debug.optimized_trajectory == input);
   EXPECT_TRUE(result.debug.was_rejected);
   EXPECT_TRUE(hasInvalidityReason(
     result.debug.validation.reasons, FirstOrderDubinsMppiInvalidityReason::lateral_boundary));

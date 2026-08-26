@@ -2088,9 +2088,9 @@ FirstOrderDubinsMppiOptimizationResult FirstOrderDubinsMppiInterface::optimizeTr
     result.trajectory = input;
     detail::applyActiveVelocityLimitProfile(
       result.trajectory, impl_->active_velocity_limit_profile);
-    result.debug.reference_trajectory = input;
-    result.debug.optimized_trajectory = result.trajectory;
-    // Keep nominal_trajectory: still shows the warm-start open-loop path.
+    // Keep the rejected optimized and nominal trajectories in the debug result. The caller still
+    // receives the safe fallback through result.trajectory, while diagnostics remain useful for
+    // understanding why the candidate was rejected.
     result.debug.was_rejected = true;
     RCLCPP_WARN(
       mppiLogger(),
