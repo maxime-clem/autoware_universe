@@ -14,6 +14,7 @@
 
 #include "autoware/mppi_optimizer/detail/trajectory_utils.hpp"
 #include "autoware/mppi_optimizer/first_order_dubins_mppi_interface.hpp"
+#include "autoware/mppi_optimizer/tracked_objects_obstacles.hpp"
 
 #include <mppi/cost_functions/dubins/first_order_dubins_bicycle_kinematic_limits.cuh>
 
@@ -132,6 +133,32 @@ TrackedObjects makeStationaryBoxObstacle(
   object.shape.dimensions.x = length;
   object.shape.dimensions.y = width;
   return objects;
+}
+
+TrackedObjects makeMovingBoxObstacle(
+  const double x, const double y, const double length, const double width, const double speed)
+{
+  auto objects = makeStationaryBoxObstacle(x, y, length, width);
+  objects.objects.front().kinematics.twist_with_covariance.twist.linear.x = speed;
+  return objects;
+}
+
+TEST(TrackedObjectObstacles, SupportsPostStepTimeAlignment)
+{
+  const auto objects = makeMovingBoxObstacle(1.0, 2.0, 4.0, 2.0, 2.0);
+  std::vector<float> x;
+  std::vector<float> y;
+  std::vector<float> yaw;
+  std::vector<float> half_length;
+  std::vector<float> half_width;
+  constexpr float dt = 0.1F;
+  buildObstacleTrajectoryBuffersFromTrackedObjects(
+    objects, dt, 2, x, y, yaw, half_length, half_width, dt);
+
+  ASSERT_EQ(x.size(), 2U);
+  EXPECT_NEAR(x[0], 1.2F, 1.0E-6F);
+  EXPECT_NEAR(x[1], 1.4F, 1.0E-6F);
+  EXPECT_NEAR(y[0], 2.0F, 1.0E-6F);
 }
 
 TEST(FirstOrderDubinsMppiInterface, SkippedInputsDoNotInitializeCuda)
@@ -458,6 +485,51 @@ TEST_F(FirstOrderDubinsMppiInterfaceGpuTest, RejectedActiveLimitRetainsLongitudi
     result.trajectory.points.back().longitudinal_velocity_mps,
     input.points.back().longitudinal_velocity_mps);
   EXPECT_FALSE(result.debug.optimized_trajectory.points.empty());
+}
+
+TEST_F(FirstOrderDubinsMppiInterfaceGpuTest, MovingObstacleRejectsUnsafeShiftedNominal)
+{
+  FirstOrderDubinsMppiRuntimeOptions options;
+  options.use_temporal_mpt_as_nominal = false;
+  options.use_last_control_as_nominal = true;
+  options.enable_dynamic_reseeding = true;
+  options.dynamic_reseed_obstacle_cost_threshold = 10000.0F;
+  options.dynamic_reseed_road_border_cost_threshold = 10000.0F;
+  interface_->setRuntimeOptions(options);
+
+  const auto input = makeStraightTrajectory(85U);
+  const auto first = optimize(*interface_, input);
+  ASSERT_FALSE(first.debug.warm_start_rejected);
+
+  // This object is moving, but remains in collision with the shifted nominal during the first
+  // post-step sample. Reseeding is decided before the stochastic MPPI update.
+  const auto moving_obstacle = makeMovingBoxObstacle(0.2, 0.0, 2.0, 2.0, 0.1);
+  const auto second = optimize(*interface_, input, makeOdometry(), moving_obstacle);
+
+  EXPECT_TRUE(second.debug.warm_start_rejected);
+  EXPECT_EQ(second.debug.nominal_source_before_reseed, "shifted_mppi");
+  EXPECT_EQ(second.debug.nominal_source_after_reseed, "diffusion");
+  EXPECT_GE(second.debug.reseed_maximum_obstacle_cost, 10000.0F);
+  ASSERT_TRUE(second.debug.first_reseed_unsafe_timestep.has_value());
+  EXPECT_EQ(second.debug.first_reseed_unsafe_timestep.value(), 0U);
+}
+
+TEST_F(FirstOrderDubinsMppiInterfaceGpuTest, DisabledDynamicReseedingKeepsShiftedNominal)
+{
+  FirstOrderDubinsMppiRuntimeOptions options;
+  options.use_temporal_mpt_as_nominal = false;
+  options.use_last_control_as_nominal = true;
+  options.enable_dynamic_reseeding = false;
+  interface_->setRuntimeOptions(options);
+
+  const auto input = makeStraightTrajectory(85U);
+  optimize(*interface_, input);
+  const auto moving_obstacle = makeMovingBoxObstacle(0.2, 0.0, 2.0, 2.0, 0.1);
+  const auto result = optimize(*interface_, input, makeOdometry(), moving_obstacle);
+
+  EXPECT_FALSE(result.debug.warm_start_rejected);
+  EXPECT_EQ(result.debug.nominal_source_before_reseed, "shifted_mppi");
+  EXPECT_EQ(result.debug.nominal_source_after_reseed, "shifted_mppi");
 }
 
 TEST_F(FirstOrderDubinsMppiInterfaceGpuTest, AppliesPerChannelActuatorDelayWithoutRefShift)

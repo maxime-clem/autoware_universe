@@ -111,6 +111,11 @@ FirstOrderDubinsMppiRuntimeOptions make_runtime_options(
   output.skip_if_invalid = params.skip_if_invalid;
   output.min_optimization_length = static_cast<float>(params.min_optimization_length);
   output.use_last_control_as_nominal = params.use_last_control_as_nominal;
+  output.enable_dynamic_reseeding = params.enable_dynamic_reseeding;
+  output.dynamic_reseed_obstacle_cost_threshold =
+    static_cast<float>(params.dynamic_reseed_obstacle_cost_threshold);
+  output.dynamic_reseed_road_border_cost_threshold =
+    static_cast<float>(params.dynamic_reseed_road_border_cost_threshold);
   output.use_temporal_mpt_as_nominal = params.use_temporal_mpt_as_nominal;
   output.prevent_reverse_velocity = params.prevent_reverse_velocity;
   output.enable_input_delay_compensation = params.enable_input_delay_compensation;
@@ -569,6 +574,21 @@ void TrajectoryMppiOptimizer::publish_cost_diagnostics(
   cost_diagnostics_->add_key_value("map_velocity_limit_active", debug.map_velocity_limit_active);
   cost_diagnostics_->add_key_value(
     "velocity_limit_profile_active", debug.velocity_limit_profile_active);
+  cost_diagnostics_->add_key_value("warm_start_rejected", debug.warm_start_rejected);
+  cost_diagnostics_->add_key_value(
+    "nominal_source_before_reseed", debug.nominal_source_before_reseed);
+  cost_diagnostics_->add_key_value(
+    "nominal_source_after_reseed", debug.nominal_source_after_reseed);
+  cost_diagnostics_->add_key_value(
+    "reseed/maximum_obstacle_cost", debug.reseed_maximum_obstacle_cost);
+  cost_diagnostics_->add_key_value(
+    "reseed/maximum_road_border_cost", debug.reseed_maximum_road_border_cost);
+  cost_diagnostics_->add_key_value(
+    "reseed/minimum_obstacle_clearance_m", debug.reseed_minimum_obstacle_clearance_m);
+  cost_diagnostics_->add_key_value(
+    "reseed/first_unsafe_timestep", debug.first_reseed_unsafe_timestep
+                                      ? std::to_string(debug.first_reseed_unsafe_timestep.value())
+                                      : std::string{"none"});
   cost_diagnostics_->add_key_value("was_applied", was_applied);
 
   if (cost.evaluated_timesteps == 0U) {

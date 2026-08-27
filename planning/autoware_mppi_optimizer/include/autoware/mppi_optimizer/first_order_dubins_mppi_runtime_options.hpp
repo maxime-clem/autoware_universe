@@ -36,6 +36,12 @@ struct FirstOrderDubinsMppiRuntimeOptions
   /** Warm-start u_nom from shifted previous optimized controls (else reseed from DP each cycle).
    *  With use_temporal_mpt_as_nominal, seeds the t-MPT NLP instead of replacing u_nom. */
   bool use_last_control_as_nominal{false};
+  /** Reject unsafe history-dependent nominal controls after current obstacle data is uploaded. */
+  bool enable_dynamic_reseeding{false};
+  /** Maximum unaveraged obstacle cost allowed at any nominal timestep. */
+  float dynamic_reseed_obstacle_cost_threshold{100000.0F};
+  /** Maximum unaveraged road-border cost allowed at any nominal timestep. */
+  float dynamic_reseed_road_border_cost_threshold{100000.0F};
   /**
    * When true (and not forced nominal), seed u_nom from acados temporal MPT
    * instead of the geometric diffusion seed. Falls back to diffusion seed on solve failure.

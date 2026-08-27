@@ -158,10 +158,7 @@ public:
     const float * x, const float * y, const float * yaw, const float * half_length,
     const float * half_width, int count);
 
-  /**
-   * Time-varying obstacle poses. All trajectories participate in hard output validation; only
-   * pose-invariant trajectories participate in the gradual static-obstacle barrier.
-   */
+  /** Time-varying obstacle poses used by both gradual rollout cost and hard validation. */
   void setOrientedBoxObstacleTrajectories(
     const float * x, const float * y, const float * yaw, const float * half_length,
     const float * half_width, int obstacle_count, int num_timesteps);
@@ -230,7 +227,7 @@ public:
   __host__ __device__ bool egoIntersectsObstacleAtStep(
     const float x, const float y, const float yaw, int timestep) const;
 
-  /** Signed distance between the physical ego OBB and the closest static obstacle OBB. */
+  /** Signed distance between the physical ego OBB and the closest time-indexed obstacle OBB. */
   __host__ __device__ float distanceToClosestObstacle(
     float x, float y, float yaw, int timestep) const;
 
@@ -261,7 +258,7 @@ public:
     const Eigen::Ref<const control_array> & u, const Eigen::Ref<const output_array> & y,
     int timestep);
 
-  /** Cost components for one host-replayed running step, including gradual static constraints. */
+  /** Cost components for one host-replayed running step, including gradual constraints. */
   autoware::mppi_optimizer::FirstOrderDubinsMppiCostBreakdown computeRunningCostBreakdown(
     const Eigen::Ref<const output_array> & y, const Eigen::Ref<const control_array> & u,
     int timestep, int * crash_status) const;
@@ -306,8 +303,6 @@ public:
   float obs_yaw_[kMaxObstacles][NUM_TIMESTEPS] = {};
   float obs_half_length_[kMaxObstacles] = {};
   float obs_half_width_[kMaxObstacles] = {};
-  /** True when the obstacle pose is invariant across the supplied horizon. */
-  bool obs_is_static_[kMaxObstacles] = {};
   int num_road_border_segments_ = 0;
   float road_border_x0_[kMaxRoadBorderSegments] = {};
   float road_border_y0_[kMaxRoadBorderSegments] = {};

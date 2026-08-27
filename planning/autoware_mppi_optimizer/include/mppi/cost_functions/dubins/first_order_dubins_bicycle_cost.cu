@@ -364,9 +364,6 @@ void FirstOrderDubinsBicycleCostImpl<CLASS_T, NUM_TIMESTEPS, PARAMS_T, DYN_PARAM
     this->cost_d_->obs_half_width_, obs_half_width_, sizeof(obs_half_width_),
     cudaMemcpyHostToDevice, this->stream_));
   HANDLE_ERROR(cudaMemcpyAsync(
-    this->cost_d_->obs_is_static_, obs_is_static_, sizeof(obs_is_static_), cudaMemcpyHostToDevice,
-    this->stream_));
-  HANDLE_ERROR(cudaMemcpyAsync(
     &this->cost_d_->num_road_border_segments_, &num_road_border_segments_,
     sizeof(num_road_border_segments_), cudaMemcpyHostToDevice, this->stream_));
   if (num_road_border_segments_ > 0) {
@@ -508,7 +505,6 @@ void FirstOrderDubinsBicycleCostImpl<CLASS_T, NUM_TIMESTEPS, PARAMS_T, DYN_PARAM
   for (int i = 0; i < n; ++i) {
     obs_half_length_[i] = half_length[i];
     obs_half_width_[i] = half_width[i];
-    obs_is_static_[i] = true;
     for (int t = 0; t < NUM_TIMESTEPS; ++t) {
       obs_x_[i][t] = x[i];
       obs_y_[i][t] = y[i];
@@ -527,22 +523,14 @@ void FirstOrderDubinsBicycleCostImpl<CLASS_T, NUM_TIMESTEPS, PARAMS_T, DYN_PARAM
   const int n = std::max(0, std::min(obstacle_count, kMaxObstacles));
   const int nt = std::max(0, std::min(num_timesteps, NUM_TIMESTEPS));
   num_obstacles_ = nt > 0 ? n : 0;
-  constexpr float kStaticPoseTolerance = 1.0E-4F;
   for (int i = 0; i < n; ++i) {
     obs_half_length_[i] = half_length[i];
     obs_half_width_[i] = half_width[i];
-    obs_is_static_[i] = true;
     for (int t = 0; t < nt; ++t) {
       const int idx = i * nt + t;
       obs_x_[i][t] = x[idx];
       obs_y_[i][t] = y[idx];
       obs_yaw_[i][t] = yaw[idx];
-      if (
-        std::fabs(x[idx] - x[i * nt]) > kStaticPoseTolerance ||
-        std::fabs(y[idx] - y[i * nt]) > kStaticPoseTolerance ||
-        std::fabs(yaw[idx] - yaw[i * nt]) > kStaticPoseTolerance) {
-        obs_is_static_[i] = false;
-      }
     }
     if (nt > 0) {
       for (int t = nt; t < NUM_TIMESTEPS; ++t) {
@@ -795,9 +783,6 @@ FirstOrderDubinsBicycleCostImpl<CLASS_T, NUM_TIMESTEPS, PARAMS_T, DYN_PARAMS_T>:
 #pragma unroll
 #endif
   for (int i = 0; i < num_obstacles_; ++i) {
-    if (!obs_is_static_[i]) {
-      continue;
-    }
     float obs_cos;
     float obs_sin;
 #ifdef __CUDA_ARCH__
@@ -968,10 +953,15 @@ FirstOrderDubinsBicycleCostImpl<CLASS_T, NUM_TIMESTEPS, PARAMS_T, DYN_PARAMS_T>:
       : computeSmoothBarrierCost(
           distanceToDrivableArea(x, y, yaw), this->params_.drivable_area_safe_margin,
           this->params_.drivable_area_barrier_weight);
+  const float obstacle_distance = distanceToClosestObstacle(x, y, yaw, timestep);
   obstacle_cost = computeSmoothBarrierCost(
-    distanceToClosestObstacle(x, y, yaw, timestep),
-    this->params_.obstacle_collision_margin + this->params_.obstacle_safe_margin,
+    obstacle_distance, this->params_.obstacle_collision_margin + this->params_.obstacle_safe_margin,
     this->params_.obstacle_barrier_weight);
+  if (obstacle_distance <= 0.0F) {
+    // Keep contact at least as expensive as crash_contact_penalty without double-counting the
+    // smooth barrier. Reusing signed distance avoids a second OBB scan in every GPU cost call.
+    obstacle_cost = fmaxf(obstacle_cost, this->params_.crash_contact_penalty);
+  }
   road_border_cost = computeSmoothBarrierCost(
     distanceToRoadBorder(x, y, yaw),
     this->params_.road_border_collision_margin + this->params_.road_border_safe_margin,

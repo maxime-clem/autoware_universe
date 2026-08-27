@@ -67,6 +67,9 @@ ignore_drivable_area: true
 force_cold_start_each_step: true
 min_optimization_length: 0.0
 use_last_control_as_nominal: true
+enable_dynamic_reseeding: false
+dynamic_reseed_obstacle_cost_threshold: 100000.0
+dynamic_reseed_road_border_cost_threshold: 100000.0
 ```
 
 Then restart the trajectory processor and compare live MPPI to offline retune.
@@ -83,6 +86,10 @@ Notes:
   length in meters; `0.0` disables the length-based skip.
 - `use_last_control_as_nominal` warm-starts `u_nom` from the shifted previous optimized control
   sequence when available; otherwise (and on cold start) reseeds from the diffusion reference.
+- Moving tracked objects use their time-indexed extrapolated poses in the rollout obstacle cost.
+- `enable_dynamic_reseeding` pre-evaluates history-dependent shifted MPPI and temporal-MPT
+  nominals against the current time-indexed obstacles and road borders. Contact, a non-finite
+  cost, or a maximum single-step cost above its threshold forces a cold nominal seed before MPPI.
 
 ### Replay only
 

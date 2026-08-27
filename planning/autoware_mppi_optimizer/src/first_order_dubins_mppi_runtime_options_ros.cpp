@@ -47,6 +47,14 @@ void declare_first_order_dubins_mppi_runtime_options(
   node.declare_parameter(
     param_name(prefix, "use_last_control_as_nominal"), defaults.use_last_control_as_nominal);
   node.declare_parameter(
+    param_name(prefix, "enable_dynamic_reseeding"), defaults.enable_dynamic_reseeding);
+  node.declare_parameter(
+    param_name(prefix, "dynamic_reseed_obstacle_cost_threshold"),
+    defaults.dynamic_reseed_obstacle_cost_threshold);
+  node.declare_parameter(
+    param_name(prefix, "dynamic_reseed_road_border_cost_threshold"),
+    defaults.dynamic_reseed_road_border_cost_threshold);
+  node.declare_parameter(
     param_name(prefix, "use_temporal_mpt_as_nominal"), defaults.use_temporal_mpt_as_nominal);
   node.declare_parameter(
     param_name(prefix, "prevent_reverse_velocity"), defaults.prevent_reverse_velocity);
@@ -75,6 +83,13 @@ FirstOrderDubinsMppiRuntimeOptions get_first_order_dubins_mppi_runtime_options(
     node.get_parameter(param_name(prefix, "min_optimization_length")).as_double());
   options.use_last_control_as_nominal =
     node.get_parameter(param_name(prefix, "use_last_control_as_nominal")).as_bool();
+  options.enable_dynamic_reseeding =
+    node.get_parameter(param_name(prefix, "enable_dynamic_reseeding")).as_bool();
+  options.dynamic_reseed_obstacle_cost_threshold = static_cast<float>(
+    node.get_parameter(param_name(prefix, "dynamic_reseed_obstacle_cost_threshold")).as_double());
+  options.dynamic_reseed_road_border_cost_threshold = static_cast<float>(
+    node.get_parameter(param_name(prefix, "dynamic_reseed_road_border_cost_threshold"))
+      .as_double());
   options.use_temporal_mpt_as_nominal =
     node.get_parameter(param_name(prefix, "use_temporal_mpt_as_nominal")).as_bool();
   options.prevent_reverse_velocity =

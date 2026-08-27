@@ -267,6 +267,23 @@ trajectory_mppi_optimizer:
     default_value: true
     description: Warm start with the previous optimized control
     read_only: false
+  enable_dynamic_reseeding:
+    type: bool
+    default_value: false
+    description: Reject unsafe history-dependent nominal controls using current obstacle predictions
+    read_only: false
+  dynamic_reseed_obstacle_cost_threshold:
+    type: double
+    default_value: 100000.0
+    description: Maximum unaveraged per-timestep obstacle cost allowed for a warm-start nominal
+    validation: { gt<>: [0.0] }
+    read_only: false
+  dynamic_reseed_road_border_cost_threshold:
+    type: double
+    default_value: 100000.0
+    description: Maximum unaveraged per-timestep road-border cost allowed for a warm-start nominal
+    validation: { gt<>: [0.0] }
+    read_only: false
   enable_debug_trajectory_log:
     type: bool
     default_value: false

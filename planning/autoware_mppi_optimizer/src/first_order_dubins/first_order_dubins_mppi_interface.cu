@@ -42,6 +42,7 @@
 #include <array>
 #include <chrono>
 #include <cmath>
+#include <cstdint>
 #include <iomanip>
 #include <memory>
 #include <numeric>
@@ -139,6 +140,31 @@ using SAMPLER = mppi::sampling_distributions::GaussianDistribution<DYN::DYN_PARA
 using Mppi = VanillaMPPIController<DYN, COST, FB, kMppiHorizon, kNumRollouts, SAMPLER>;
 using CostBreakdown = FirstOrderDubinsMppiCostBreakdown;
 
+enum class NominalSource : std::uint8_t {
+  diffusion,
+  shifted_mppi,
+  temporal_mpt,
+  temporal_mpt_warm_started,
+  forced,
+};
+
+const char * nominalSourceName(const NominalSource source)
+{
+  switch (source) {
+    case NominalSource::diffusion:
+      return "diffusion";
+    case NominalSource::shifted_mppi:
+      return "shifted_mppi";
+    case NominalSource::temporal_mpt:
+      return "temporal_mpt";
+    case NominalSource::temporal_mpt_warm_started:
+      return "temporal_mpt_warm_started";
+    case NominalSource::forced:
+      return "forced";
+  }
+  return "unknown";
+}
+
 constexpr std::array<float CostBreakdown::*, 25> kCostBreakdownFields = {
   &CostBreakdown::speed,
   &CostBreakdown::track,
@@ -223,6 +249,69 @@ CostBreakdown reconstructControlTrajectoryCost(
   // MPPI-Generic stores the horizon-average of both running and terminal costs.
   scaleCostBreakdown(result, 1.0F / static_cast<float>(horizon));
   result.evaluated_timesteps = static_cast<std::size_t>(horizon);
+  return result;
+}
+
+struct NominalRisk
+{
+  float maximum_obstacle_cost{0.0F};
+  float maximum_road_border_cost{0.0F};
+  float minimum_obstacle_clearance_m{1.0E8F};
+  bool obstacle_contact{false};
+  std::size_t maximum_obstacle_cost_timestep{0U};
+  std::size_t maximum_road_border_cost_timestep{0U};
+  std::optional<std::size_t> first_obstacle_contact_timestep;
+};
+
+NominalRisk evaluateNominalRisk(
+  const COST & cost, DYN & model, const DYN::state_array & initial_state,
+  const Mppi::control_trajectory & controls)
+{
+  NominalRisk result;
+  const int horizon = std::min(kMppiHorizon, static_cast<int>(controls.cols()));
+  DYN::state_array state = initial_state;
+  DYN::state_array next_state = DYN::state_array::Zero();
+  DYN::state_array state_derivative = DYN::state_array::Zero();
+  DYN::output_array output = DYN::output_array::Zero();
+  constexpr int kPositionX =
+    static_cast<int>(FirstOrderDubinsBicycleParams::OutputIndex::BASELINK_POS_I_X);
+  constexpr int kPositionY =
+    static_cast<int>(FirstOrderDubinsBicycleParams::OutputIndex::BASELINK_POS_I_Y);
+  constexpr int kYaw = static_cast<int>(FirstOrderDubinsBicycleParams::OutputIndex::YAW);
+
+  for (int timestep = 0; timestep < horizon; ++timestep) {
+    DYN::control_array control = controls.col(timestep);
+    model.enforceConstraints(state, control);
+    model.step(
+      state, next_state, state_derivative, control, output, static_cast<float>(timestep), kDt);
+
+    int crash_status = 0;
+    const auto breakdown =
+      cost.computeRunningCostBreakdown(output, control, timestep, &crash_status);
+    if (!std::isfinite(breakdown.obstacle) || breakdown.obstacle > result.maximum_obstacle_cost) {
+      result.maximum_obstacle_cost = breakdown.obstacle;
+      result.maximum_obstacle_cost_timestep = static_cast<std::size_t>(timestep);
+    }
+    if (
+      !std::isfinite(breakdown.road_border) ||
+      breakdown.road_border > result.maximum_road_border_cost) {
+      result.maximum_road_border_cost = breakdown.road_border;
+      result.maximum_road_border_cost_timestep = static_cast<std::size_t>(timestep);
+    }
+
+    const float x = output(kPositionX);
+    const float y = output(kPositionY);
+    const float yaw = output(kYaw);
+    result.minimum_obstacle_clearance_m = std::min(
+      result.minimum_obstacle_clearance_m, cost.distanceToClosestObstacle(x, y, yaw, timestep));
+    if (cost.egoIntersectsObstacleAtStep(x, y, yaw, timestep)) {
+      result.obstacle_contact = true;
+      if (!result.first_obstacle_contact_timestep) {
+        result.first_obstacle_contact_timestep = static_cast<std::size_t>(timestep);
+      }
+    }
+    state = next_state;
+  }
   return result;
 }
 
@@ -738,6 +827,17 @@ struct FirstOrderDubinsMppiInterface::Impl
   float min_optimization_length{0.0F};
   /** Warm-start u_nom from shifted previous u_opt when available. */
   bool use_last_control_as_nominal{false};
+  /** Reject history-dependent nominal controls that are unsafe under current predictions. */
+  bool enable_dynamic_reseeding{false};
+  float dynamic_reseed_obstacle_cost_threshold{100000.0F};
+  float dynamic_reseed_road_border_cost_threshold{100000.0F};
+  NominalSource nominal_source{NominalSource::diffusion};
+  NominalSource nominal_source_before_reseed{NominalSource::diffusion};
+  bool nominal_history_dependent{false};
+  bool warm_start_rejected{false};
+  NominalRisk nominal_risk_before_reseed{};
+  NominalRisk nominal_risk_after_reseed{};
+  std::optional<std::size_t> first_reseed_unsafe_timestep;
   /** Cold-seed u_nom from acados temporal MPT instead of geometric diffusion seed. */
   bool use_temporal_mpt_as_nominal{false};
   /** Prevent acceleration commands and integrated states from producing reverse velocity. */
@@ -910,6 +1010,13 @@ struct FirstOrderDubinsMppiInterface::Impl
     steer_delay_buffer.clear();
     delay_buffer_seeded = false;
     temporal_mpt_nominal_seeder.resetWarmStart();
+    nominal_source = NominalSource::diffusion;
+    nominal_source_before_reseed = NominalSource::diffusion;
+    nominal_history_dependent = false;
+    warm_start_rejected = false;
+    nominal_risk_before_reseed = NominalRisk{};
+    nominal_risk_after_reseed = NominalRisk{};
+    first_reseed_unsafe_timestep.reset();
   }
 
   void syncDelayStepsToModel()
@@ -1241,9 +1348,12 @@ struct FirstOrderDubinsMppiInterface::Impl
   void seedNominalControl(
     const Trajectory & reference, const size_t start_idx, const detail::InitialState & ego)
   {
+    nominal_source = NominalSource::diffusion;
+    nominal_history_dependent = false;
     if (forced_nominal_pending) {
       seedNominalControlFromForced();
       forced_nominal_pending = false;
+      nominal_source = NominalSource::forced;
     } else {
       // After a tracking reset, step_count is 0 and u_opt was cleared — fall back to DP / MPT
       // seed. Also reseed when departing from a stop: shifted last u_opt is usually near-zero /
@@ -1252,6 +1362,8 @@ struct FirstOrderDubinsMppiInterface::Impl
       const bool started_from_stop = std::abs(ego.velocity) < kStoppedVelocityMps;
       if (use_last_control_as_nominal && step_count > 0 && !started_from_stop) {
         seedNominalControlFromLastOptimized();
+        nominal_source = NominalSource::shifted_mppi;
+        nominal_history_dependent = true;
       } else if (use_temporal_mpt_as_nominal) {
         // seedNominalControlFromTemporalMpt(reference, ego);
       } else {
@@ -1285,16 +1397,25 @@ struct FirstOrderDubinsMppiInterface::Impl
         temporal_mpt_nominal_seeder.resetWarmStart();
       }
       seedNominalControlFromTemporalMpt(reference, ego);
+      // Even without a shifted MPPI seed, the temporal solver retains its own prior solution.
+      const bool temporal_mpt_has_history = step_count > 0 && !started_from_stop;
+      nominal_source = temporal_mpt_has_history ? NominalSource::temporal_mpt_warm_started
+                                                : NominalSource::temporal_mpt;
+      nominal_history_dependent = temporal_mpt_has_history;
       filterNominalControl(ego);
       snapshotNominalForLog();
       return;
     }
     if (have_last_u) {
       seedNominalControlFromLastOptimized();
+      nominal_source = NominalSource::shifted_mppi;
+      nominal_history_dependent = true;
       snapshotNominalForLog();
       return;
     }
     seedNominalControlFromDiffusionReference(reference, start_idx);
+    nominal_source = NominalSource::diffusion;
+    nominal_history_dependent = false;
     filterNominalControl(ego);
     snapshotNominalForLog();
   }
@@ -1433,6 +1554,101 @@ struct FirstOrderDubinsMppiInterface::Impl
     }
   }
 
+  void rejectUnsafeHistoryDependentNominalIfNeeded()
+  {
+    warm_start_rejected = false;
+    first_reseed_unsafe_timestep.reset();
+    nominal_source_before_reseed = nominal_source;
+    nominal_risk_before_reseed = NominalRisk{};
+    nominal_risk_after_reseed = NominalRisk{};
+    if (!enable_dynamic_reseeding || !nominal_history_dependent) {
+      return;
+    }
+
+    const auto is_unsafe = [this](const NominalRisk & risk) {
+      return risk.obstacle_contact || !std::isfinite(risk.maximum_obstacle_cost) ||
+             risk.maximum_obstacle_cost > dynamic_reseed_obstacle_cost_threshold ||
+             !std::isfinite(risk.maximum_road_border_cost) ||
+             risk.maximum_road_border_cost > dynamic_reseed_road_border_cost_threshold;
+    };
+    const auto unsafe_timestep = [this](const NominalRisk & risk) {
+      std::optional<std::size_t> result = risk.first_obstacle_contact_timestep;
+      const auto include = [&result](const std::size_t timestep) {
+        result = result ? std::min(*result, timestep) : timestep;
+      };
+      if (
+        !std::isfinite(risk.maximum_obstacle_cost) ||
+        risk.maximum_obstacle_cost > dynamic_reseed_obstacle_cost_threshold) {
+        include(risk.maximum_obstacle_cost_timestep);
+      }
+      if (
+        !std::isfinite(risk.maximum_road_border_cost) ||
+        risk.maximum_road_border_cost > dynamic_reseed_road_border_cost_threshold) {
+        include(risk.maximum_road_border_cost_timestep);
+      }
+      return result;
+    };
+
+    nominal_risk_before_reseed = evaluateNominalRisk(cost, model, x, u_nom);
+    if (!is_unsafe(nominal_risk_before_reseed)) {
+      nominal_risk_after_reseed = nominal_risk_before_reseed;
+      return;
+    }
+
+    warm_start_rejected = true;
+    first_reseed_unsafe_timestep = unsafe_timestep(nominal_risk_before_reseed);
+    detail::InitialState ego;
+    ego.x = x(static_cast<int>(FirstOrderDubinsBicycleParams::StateIndex::POS_X));
+    ego.y = x(static_cast<int>(FirstOrderDubinsBicycleParams::StateIndex::POS_Y));
+    ego.yaw = x(static_cast<int>(FirstOrderDubinsBicycleParams::StateIndex::YAW));
+    ego.velocity = x(static_cast<int>(FirstOrderDubinsBicycleParams::StateIndex::VEL_X));
+    ego.acceleration = x(static_cast<int>(FirstOrderDubinsBicycleParams::StateIndex::ACCELERATION));
+    ego.steering = x(static_cast<int>(FirstOrderDubinsBicycleParams::StateIndex::STEER_ANGLE));
+
+    // If t-MPT inherited the previous MPPI solution, first give it one genuinely cold solve.
+    if (nominal_source == NominalSource::temporal_mpt_warm_started) {
+      temporal_mpt_nominal_seeder.resetWarmStart();
+      seedNominalControlFromTemporalMpt(diffusion_reference, ego);
+      filterNominalControl(ego);
+      applyActiveVelocityLimitToNominal();
+      snapshotNominalForLog();
+      nominal_source = NominalSource::temporal_mpt;
+      nominal_history_dependent = false;
+      nominal_risk_after_reseed = evaluateNominalRisk(cost, model, x, u_nom);
+      if (!is_unsafe(nominal_risk_after_reseed)) {
+        RCLCPP_WARN(
+          mppiLogger(),
+          "Rejected unsafe history-dependent temporal-MPT nominal and accepted a cold solve: "
+          "obstacle_max=%.3f road_border_max=%.3f min_clearance=%.3f",
+          nominal_risk_before_reseed.maximum_obstacle_cost,
+          nominal_risk_before_reseed.maximum_road_border_cost,
+          nominal_risk_before_reseed.minimum_obstacle_clearance_m);
+        return;
+      }
+    }
+
+    seedNominalControlFromDiffusionReference(diffusion_reference, tracking_start_idx);
+    filterNominalControl(ego);
+    applyActiveVelocityLimitToNominal();
+    snapshotNominalForLog();
+    nominal_source = NominalSource::diffusion;
+    nominal_history_dependent = false;
+    nominal_risk_after_reseed = evaluateNominalRisk(cost, model, x, u_nom);
+    const std::string first_unsafe = first_reseed_unsafe_timestep
+                                       ? std::to_string(*first_reseed_unsafe_timestep)
+                                       : std::string{"none"};
+    RCLCPP_WARN(
+      mppiLogger(),
+      "Rejected unsafe %s nominal and cold-seeded from the diffusion reference: "
+      "obstacle_max=%.3f (limit=%.3f) road_border_max=%.3f (limit=%.3f) "
+      "min_clearance=%.3f first_unsafe=%s",
+      nominalSourceName(nominal_source_before_reseed),
+      nominal_risk_before_reseed.maximum_obstacle_cost, dynamic_reseed_obstacle_cost_threshold,
+      nominal_risk_before_reseed.maximum_road_border_cost,
+      dynamic_reseed_road_border_cost_threshold,
+      nominal_risk_before_reseed.minimum_obstacle_clearance_m, first_unsafe.c_str());
+  }
+
   FirstOrderDubinsMppiControl runStep()
   {
     // History taps used by this cycle's Savitzky–Golay (before slideControlSequence).
@@ -1500,11 +1716,11 @@ struct FirstOrderDubinsMppiInterface::Impl
     if (!tracked_objects.objects.empty()) {
       buildObstacleTrajectoryBuffersFromTrackedObjects(
         tracked_objects, kDt, kRefHorizon, obs_traj_x, obs_traj_y, obs_traj_yaw, obs_half_length,
-        obs_half_width, 0.0F);
+        obs_half_width, kDt);
       obstacle_count = trackedObjectObstacleCount(tracked_objects);
     } else if (!obstacles.empty()) {
       mppi::cost::buildObstacleTrajectoryBuffers(
-        obstacles, sim_time, kDt, kRefHorizon, obs_traj_x, obs_traj_y, obs_traj_yaw,
+        obstacles, sim_time + kDt, kDt, kRefHorizon, obs_traj_x, obs_traj_y, obs_traj_yaw,
         obs_half_length, obs_half_width);
       obstacle_count =
         static_cast<int>(std::min(obstacles.size(), static_cast<size_t>(kMaxMppiObstacles)));
@@ -1522,6 +1738,7 @@ struct FirstOrderDubinsMppiInterface::Impl
       obstacle_count > 0 ? obs_half_length.data() : nullptr,
       obstacle_count > 0 ? obs_half_width.data() : nullptr, obstacle_count, kRefHorizon);
     uploadBoundarySegments();
+    rejectUnsafeHistoryDependentNominalIfNeeded();
 
     controller->updateImportanceSampler(u_nom);
     controller->computeControl(x, 1);
@@ -1653,19 +1870,29 @@ void FirstOrderDubinsMppiInterface::setRuntimeOptions(
     throw std::runtime_error("FirstOrderDubinsMppiInterface implementation is missing");
   }
   impl_->prevent_reverse_velocity = options.prevent_reverse_velocity;
+  impl_->use_temporal_mpt_as_nominal = options.use_temporal_mpt_as_nominal;
+  impl_->enable_dynamic_reseeding = options.enable_dynamic_reseeding;
+  const auto positive_or_default = [](const float value, const float fallback) {
+    return std::isfinite(value) && value > 0.0F ? value : fallback;
+  };
+  impl_->dynamic_reseed_obstacle_cost_threshold = positive_or_default(
+    options.dynamic_reseed_obstacle_cost_threshold,
+    std::max(impl_->user_cost_params_.crash_contact_penalty, 1.0F));
+  impl_->dynamic_reseed_road_border_cost_threshold = positive_or_default(
+    options.dynamic_reseed_road_border_cost_threshold,
+    std::max(impl_->user_cost_params_.crash_contact_penalty, 1.0F));
+  impl_->enable_input_delay_compensation = options.enable_input_delay_compensation;
+  impl_->min_optimization_length = options.min_optimization_length;
+  impl_->dyn.prevent_reverse_velocity = options.prevent_reverse_velocity;
+
+  // Configure logging only after every runtime field has been assigned: setAblationOptions()
+  // writes the runtime-options snapshot on first use.
   setDebugTrajectoryLogging(
     options.enable_debug_trajectory_log, options.debug_trajectory_log_directory);
   setAblationOptions(
     options.ignore_obstacles, options.ignore_road_borders, options.ignore_drivable_area,
     options.force_cold_start_each_step, options.skip_if_invalid,
     options.use_last_control_as_nominal);
-  if (!impl_) {
-    throw std::runtime_error("FirstOrderDubinsMppiInterface implementation is missing");
-  }
-  impl_->use_temporal_mpt_as_nominal = options.use_temporal_mpt_as_nominal;
-  impl_->enable_input_delay_compensation = options.enable_input_delay_compensation;
-  impl_->min_optimization_length = options.min_optimization_length;
-  impl_->dyn.prevent_reverse_velocity = options.prevent_reverse_velocity;
   if (impl_->initialized) {
     impl_->syncDelayStepsToModel();
     if (!impl_->enable_input_delay_compensation) {
@@ -1677,9 +1904,12 @@ void FirstOrderDubinsMppiInterface::setRuntimeOptions(
   }
   RCLCPP_INFO(
     mppiLogger(),
-    "MPPI nominal seed: use_temporal_mpt_as_nominal=%s enable_input_delay_compensation=%s "
-    "prevent_reverse_velocity=%s",
+    "MPPI nominal seed: use_temporal_mpt_as_nominal=%s dynamic_reseeding=%s "
+    "dynamic_reseed_obstacle_threshold=%.1f dynamic_reseed_road_border_threshold=%.1f "
+    "enable_input_delay_compensation=%s prevent_reverse_velocity=%s",
     options.use_temporal_mpt_as_nominal ? "true" : "false",
+    options.enable_dynamic_reseeding ? "true" : "false",
+    impl_->dynamic_reseed_obstacle_cost_threshold, impl_->dynamic_reseed_road_border_cost_threshold,
     options.enable_input_delay_compensation ? "true" : "false",
     options.prevent_reverse_velocity ? "true" : "false");
 }
@@ -1722,6 +1952,10 @@ void FirstOrderDubinsMppiInterface::setAblationOptions(
   runtime.skip_if_invalid = skip_if_invalid;
   runtime.min_optimization_length = impl_->min_optimization_length;
   runtime.use_last_control_as_nominal = use_last_control_as_nominal;
+  runtime.enable_dynamic_reseeding = impl_->enable_dynamic_reseeding;
+  runtime.dynamic_reseed_obstacle_cost_threshold = impl_->dynamic_reseed_obstacle_cost_threshold;
+  runtime.dynamic_reseed_road_border_cost_threshold =
+    impl_->dynamic_reseed_road_border_cost_threshold;
   runtime.use_temporal_mpt_as_nominal = impl_->use_temporal_mpt_as_nominal;
   runtime.prevent_reverse_velocity = impl_->prevent_reverse_velocity;
   runtime.enable_input_delay_compensation = impl_->enable_input_delay_compensation;
@@ -2017,6 +2251,17 @@ FirstOrderDubinsMppiOptimizationResult FirstOrderDubinsMppiInterface::optimizeTr
   result.debug.velocity_limit_profile_active = impl_->active_velocity_limit_profile.active;
   result.debug.external_velocity_limit_active =
     impl_->active_velocity_limit_profile.active && impl_->active_kinematic_limits.max_velocity;
+  result.debug.warm_start_rejected = impl_->warm_start_rejected;
+  result.debug.nominal_source_before_reseed =
+    nominalSourceName(impl_->nominal_source_before_reseed);
+  result.debug.nominal_source_after_reseed = nominalSourceName(impl_->nominal_source);
+  result.debug.reseed_maximum_obstacle_cost =
+    impl_->nominal_risk_before_reseed.maximum_obstacle_cost;
+  result.debug.reseed_maximum_road_border_cost =
+    impl_->nominal_risk_before_reseed.maximum_road_border_cost;
+  result.debug.reseed_minimum_obstacle_clearance_m =
+    impl_->nominal_risk_before_reseed.minimum_obstacle_clearance_m;
+  result.debug.first_reseed_unsafe_timestep = impl_->first_reseed_unsafe_timestep;
   if (impl_->enable_rollout_visualization) {
     buildRolloutVisualization(
       *impl_->controller, impl_->sampler, impl_->model, x_at_optimization,
@@ -2053,6 +2298,10 @@ FirstOrderDubinsMppiOptimizationResult FirstOrderDubinsMppiInterface::optimizeTr
     runtime.skip_if_invalid = impl_->skip_if_invalid;
     runtime.min_optimization_length = impl_->min_optimization_length;
     runtime.use_last_control_as_nominal = impl_->use_last_control_as_nominal;
+    runtime.enable_dynamic_reseeding = impl_->enable_dynamic_reseeding;
+    runtime.dynamic_reseed_obstacle_cost_threshold = impl_->dynamic_reseed_obstacle_cost_threshold;
+    runtime.dynamic_reseed_road_border_cost_threshold =
+      impl_->dynamic_reseed_road_border_cost_threshold;
     runtime.use_temporal_mpt_as_nominal = impl_->use_temporal_mpt_as_nominal;
     runtime.prevent_reverse_velocity = impl_->prevent_reverse_velocity;
     runtime.enable_input_delay_compensation = impl_->enable_input_delay_compensation;
@@ -2064,7 +2313,11 @@ FirstOrderDubinsMppiOptimizationResult FirstOrderDubinsMppiInterface::optimizeTr
     impl_->logged_nominal_steer, road_borders, drivable_area, tracked_objects,
     impl_->logged_hist_accel_tm2, impl_->logged_hist_steer_tm2, impl_->logged_hist_accel_tm1,
     impl_->logged_hist_steer_tm1, impl_->logged_delay_accel, impl_->logged_delay_steer,
-    impl_->logged_applied_accel, impl_->logged_applied_steer, impl_->active_kinematic_limits);
+    impl_->logged_applied_accel, impl_->logged_applied_steer, impl_->active_kinematic_limits,
+    result.debug.warm_start_rejected, result.debug.nominal_source_before_reseed,
+    result.debug.nominal_source_after_reseed, result.debug.reseed_maximum_obstacle_cost,
+    result.debug.reseed_maximum_road_border_cost, result.debug.reseed_minimum_obstacle_clearance_m,
+    result.debug.first_reseed_unsafe_timestep);
 
   const auto validation_reasons = to_string(result.debug.validation.reasons);
   const auto cost_breakdown = formatCostBreakdown(result.debug.cost_breakdown);

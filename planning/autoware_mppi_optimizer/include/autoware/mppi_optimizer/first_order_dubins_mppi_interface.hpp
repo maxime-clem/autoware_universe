@@ -229,6 +229,14 @@ struct FirstOrderDubinsMppiDebug
   std::vector<std::optional<float>> effective_max_velocity_by_reference_point;
   /** True when skip_if_invalid replaced the optimized trajectory with the input trajectory. */
   bool was_rejected{false};
+  /** True when current obstacle/border predictions rejected a history-dependent nominal. */
+  bool warm_start_rejected{false};
+  std::string nominal_source_before_reseed{"diffusion"};
+  std::string nominal_source_after_reseed{"diffusion"};
+  float reseed_maximum_obstacle_cost{0.0F};
+  float reseed_maximum_road_border_cost{0.0F};
+  float reseed_minimum_obstacle_clearance_m{0.0F};
+  std::optional<std::size_t> first_reseed_unsafe_timestep;
 };
 
 struct FirstOrderDubinsMppiOptimizationResult

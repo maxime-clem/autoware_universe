@@ -403,6 +403,10 @@ inline bool loadMppiDebugRuntimeOptionsCsv(
     }
     return it->second != 0.0F;
   };
+  auto as_float = [&kv](const char * key, const float fallback) {
+    const auto it = kv.find(key);
+    return it == kv.end() ? fallback : it->second;
+  };
   const auto min_optimization_length_it = kv.find("min_optimization_length");
   if (min_optimization_length_it != kv.end()) {
     options.min_optimization_length = min_optimization_length_it->second;
@@ -415,6 +419,12 @@ inline bool loadMppiDebugRuntimeOptionsCsv(
   options.skip_if_invalid = as_bool("skip_if_invalid", options.skip_if_invalid);
   options.use_last_control_as_nominal =
     as_bool("use_last_control_as_nominal", options.use_last_control_as_nominal);
+  options.enable_dynamic_reseeding =
+    as_bool("enable_dynamic_reseeding", options.enable_dynamic_reseeding);
+  options.dynamic_reseed_obstacle_cost_threshold = as_float(
+    "dynamic_reseed_obstacle_cost_threshold", options.dynamic_reseed_obstacle_cost_threshold);
+  options.dynamic_reseed_road_border_cost_threshold = as_float(
+    "dynamic_reseed_road_border_cost_threshold", options.dynamic_reseed_road_border_cost_threshold);
   options.use_temporal_mpt_as_nominal =
     as_bool("use_temporal_mpt_as_nominal", options.use_temporal_mpt_as_nominal);
   options.prevent_reverse_velocity =

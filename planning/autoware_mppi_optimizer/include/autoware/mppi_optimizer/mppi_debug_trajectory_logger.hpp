@@ -32,6 +32,7 @@
 #include <filesystem>
 #include <fstream>
 #include <iomanip>
+#include <optional>
 #include <sstream>
 #include <string>
 #include <vector>
@@ -83,6 +84,7 @@ struct MppiDebugEgoState
  *   <log_dir>/000000_control_history.csv  (SG taps at cycle start)
  *   <log_dir>/000000_delay_buffer.csv     (per-channel FIFOs before optimize)
  *   <log_dir>/000000_applied.csv          (u[0] applied this cycle)
+ *   <log_dir>/000000_reseed.csv           (nominal risk and dynamic-reseed decision)
  *   ...
  *
  * Trajectory CSV columns:
@@ -226,6 +228,11 @@ public:
       out << "min_optimization_length," << options.min_optimization_length << "\n";
       out << "use_last_control_as_nominal," << (options.use_last_control_as_nominal ? 1 : 0)
           << "\n";
+      out << "enable_dynamic_reseeding," << (options.enable_dynamic_reseeding ? 1 : 0) << "\n";
+      out << "dynamic_reseed_obstacle_cost_threshold,"
+          << options.dynamic_reseed_obstacle_cost_threshold << "\n";
+      out << "dynamic_reseed_road_border_cost_threshold,"
+          << options.dynamic_reseed_road_border_cost_threshold << "\n";
       out << "use_temporal_mpt_as_nominal," << (options.use_temporal_mpt_as_nominal ? 1 : 0)
           << "\n";
       out << "prevent_reverse_velocity," << (options.prevent_reverse_velocity ? 1 : 0) << "\n";
@@ -246,7 +253,11 @@ public:
     const float hist_accel_tm2, const float hist_steer_tm2, const float hist_accel_tm1,
     const float hist_steer_tm1, const std::vector<float> & delay_accel_cmd,
     const std::vector<float> & delay_steer_cmd, const float applied_accel_cmd,
-    const float applied_steer_cmd, const FirstOrderDubinsMppiKinematicLimits & kinematic_limits)
+    const float applied_steer_cmd, const FirstOrderDubinsMppiKinematicLimits & kinematic_limits,
+    const bool warm_start_rejected, const std::string & nominal_source_before_reseed,
+    const std::string & nominal_source_after_reseed, const float maximum_obstacle_cost,
+    const float maximum_road_border_cost, const float minimum_obstacle_clearance_m,
+    const std::optional<std::size_t> & first_unsafe_timestep)
   {
     if (!enabled_) {
       return;
@@ -286,6 +297,10 @@ public:
       directory_ + "/" + frame_tag + "_applied.csv", applied_accel_cmd, applied_steer_cmd);
     writeKinematicLimitsCsv(
       directory_ + "/" + frame_tag + "_kinematic_limits.csv", kinematic_limits);
+    writeReseedCsv(
+      directory_ + "/" + frame_tag + "_reseed.csv", warm_start_rejected,
+      nominal_source_before_reseed, nominal_source_after_reseed, maximum_obstacle_cost,
+      maximum_road_border_cost, minimum_obstacle_clearance_m, first_unsafe_timestep);
 
     const auto & stamp = reference.header.stamp.sec != 0 || reference.header.stamp.nanosec != 0
                            ? reference.header.stamp
@@ -493,6 +508,30 @@ private:
       out << "min_longitudinal_jerk," << *limits.min_longitudinal_jerk << "\n";
       out << "max_longitudinal_jerk," << *limits.max_longitudinal_jerk << "\n";
     }
+  }
+
+  static void writeReseedCsv(
+    const std::string & path, const bool warm_start_rejected,
+    const std::string & nominal_source_before_reseed,
+    const std::string & nominal_source_after_reseed, const float maximum_obstacle_cost,
+    const float maximum_road_border_cost, const float minimum_obstacle_clearance_m,
+    const std::optional<std::size_t> & first_unsafe_timestep)
+  {
+    std::ofstream out(path);
+    if (!out) {
+      return;
+    }
+    out << "key,value\n";
+    out << std::setprecision(9) << std::fixed;
+    out << "warm_start_rejected," << (warm_start_rejected ? 1 : 0) << "\n";
+    out << "nominal_source_before_reseed," << nominal_source_before_reseed << "\n";
+    out << "nominal_source_after_reseed," << nominal_source_after_reseed << "\n";
+    out << "maximum_obstacle_cost," << maximum_obstacle_cost << "\n";
+    out << "maximum_road_border_cost," << maximum_road_border_cost << "\n";
+    out << "minimum_obstacle_clearance_m," << minimum_obstacle_clearance_m << "\n";
+    out << "first_unsafe_timestep,"
+        << (first_unsafe_timestep ? std::to_string(*first_unsafe_timestep) : std::string{"none"})
+        << "\n";
   }
 
   bool enabled_{false};

@@ -325,7 +325,7 @@ TEST_F(TrajectoryValidatorTest, SmoothBarrierCostGrowsBeyondContactPenaltyForPen
   EXPECT_TRUE(std::isfinite(breakdown.total));
 }
 
-TEST_F(TrajectoryValidatorTest, ExcludesMovingObjectsFromGradualObstacleCost)
+TEST_F(TrajectoryValidatorTest, UsesTimeIndexedMovingObjectsInGradualObstacleCost)
 {
   auto params = makeParams();
   params.obstacle_safe_margin = 0.5F;
@@ -336,23 +336,27 @@ TEST_F(TrajectoryValidatorTest, ExcludesMovingObjectsFromGradualObstacleCost)
   std::array<float, kTestHorizon> obstacle_x{};
   std::array<float, kTestHorizon> obstacle_y{};
   std::array<float, kTestHorizon> obstacle_yaw{};
-  for (int t = 0; t < kTestHorizon; ++t) {
-    obstacle_x[static_cast<size_t>(t)] = 0.2F + 0.1F * static_cast<float>(t);
-  }
+  obstacle_x.fill(10.0F);
+  obstacle_x[0] = 0.2F;
   constexpr float obstacle_half_length = 0.1F;
   constexpr float obstacle_half_width = 0.1F;
   cost_->setOrientedBoxObstacleTrajectories(
     obstacle_x.data(), obstacle_y.data(), obstacle_yaw.data(), &obstacle_half_length,
     &obstacle_half_width, 1, kTestHorizon);
 
-  // Moving objects remain available to the hard output validator.
+  // Moving objects participate in both hard validation and the gradual rollout objective.
   EXPECT_TRUE(cost_->egoIntersectsObstacleAtStep(0.0F, 0.0F, 0.0F, 0));
+  EXPECT_FALSE(cost_->egoIntersectsObstacleAtStep(0.0F, 0.0F, 0.0F, 1));
 
   TestCost::output_array output = TestCost::output_array::Zero();
   TestCost::control_array control = TestCost::control_array::Zero();
   int crash_status = 0;
-  const auto breakdown = cost_->computeRunningCostBreakdown(output, control, 0, &crash_status);
-  EXPECT_FLOAT_EQ(breakdown.obstacle, 0.0F);
+  const auto contact = cost_->computeRunningCostBreakdown(output, control, 0, &crash_status);
+  const auto clear = cost_->computeRunningCostBreakdown(output, control, 1, &crash_status);
+  EXPECT_GE(contact.obstacle, params.crash_contact_penalty);
+  EXPECT_GE(cost_->computeStateCost(output, 0, &crash_status), params.crash_contact_penalty);
+  EXPECT_FLOAT_EQ(clear.obstacle, 0.0F);
+  EXPECT_FLOAT_EQ(contact.total, contact.componentTotal());
 }
 
 TEST_F(TrajectoryValidatorTest, GradualConstraintCostsAreIncludedInBreakdownTotal)
