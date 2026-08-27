@@ -537,6 +537,7 @@ void TrajectoryMppiOptimizer::publish_cost_diagnostics(
   cost_diagnostics_->add_key_value("state/track", cost.track);
   cost_diagnostics_->add_key_value("state/heading", cost.heading);
   cost_diagnostics_->add_key_value("state/lateral_distance", cost.lateral_distance);
+  cost_diagnostics_->add_key_value("state/lateral_boundary", cost.lateral_boundary);
   cost_diagnostics_->add_key_value("state/signed_lateral_error_m", cost.signed_lateral_error_m);
   cost_diagnostics_->add_key_value("state/lateral_yaw_error", cost.lateral_yaw_error);
   cost_diagnostics_->add_key_value("state/track_center", cost.track_center);
@@ -552,6 +553,11 @@ void TrajectoryMppiOptimizer::publish_cost_diagnostics(
   cost_diagnostics_->add_key_value("comfort/lateral_jerk", cost.lateral_jerk);
   cost_diagnostics_->add_key_value("comfort/longitudinal_jerk", cost.longitudinal_jerk);
   cost_diagnostics_->add_key_value("comfort/steering_rate", cost.steering_rate);
+  cost_diagnostics_->add_key_value(
+    "kinematic_limit/velocity_overlimit", cost.kinematic_velocity_overlimit);
+  cost_diagnostics_->add_key_value(
+    "kinematic_limit/acceleration_overlimit", cost.kinematic_acceleration_overlimit);
+  cost_diagnostics_->add_key_value("kinematic_limit/jerk_overlimit", cost.kinematic_jerk_overlimit);
   cost_diagnostics_->add_key_value("validation_reason", to_string(debug.validation.reasons));
   cost_diagnostics_->add_key_value(
     "first_invalid_index", debug.validation.first_invalid_index
