@@ -104,15 +104,14 @@ void setInitialEngageVelocity(
   const std::vector<std::optional<float>> & maximum_velocities);
 
 /**
- * Build the fastest delay-, lag-, acceleration-, and jerk-aware profile under the effective
+ * Build the fastest lag-, acceleration-, and jerk-aware profile under the effective
  * external/map maximum-velocity envelope. Uniform limits retain the existing scalar behavior;
  * varying limits use a backwards reachable envelope so braking begins before a lower future cap.
  */
 [[nodiscard]] ActiveVelocityLimitProfile buildActiveVelocityLimitProfile(
   const std::vector<FirstOrderDubinsMppiControl> & controls, const InitialState & initial_state,
   const FirstOrderDubinsMppiKinematicLimits & limits,
-  const FirstOrderDubinsMppiVehicleParams & vehicle_params, int acceleration_delay_steps = 0,
-  const std::vector<float> & acceleration_delay_buffer = {}, float dt = kMppiDt,
+  const FirstOrderDubinsMppiVehicleParams & vehicle_params, float dt = kMppiDt,
   bool keep_active = false, const std::vector<float> & reference_velocities = {});
 
 /** Apply an active profile to trajectory velocity/acceleration fields; inactive is an exact no-op.
@@ -132,20 +131,22 @@ void applyActiveVelocityLimitProfile(
 /**
  * Filter an MPPI nominal control sequence through optional longitudinal kinematic limits.
  *
- * The filter predicts the first-order acceleration state through the pending input-delay queue.
- * It preserves steering, clamps acceleration commands to active acceleration bounds, applies
- * active jerk bounds at the time each command reaches the plant, and biases acceleration toward
- * the admissible boundary while predicted velocity is outside the active pointwise interval.
+ * The filter predicts the zero-delay first-order acceleration state. It preserves steering,
+ * clamps acceleration commands to active acceleration bounds, applies active jerk bounds, and
+ * biases acceleration toward the admissible boundary outside the active pointwise interval.
  */
 [[nodiscard]] std::vector<FirstOrderDubinsMppiControl> filterNominalControlWithKinematicLimits(
   const std::vector<FirstOrderDubinsMppiControl> & nominal, const InitialState & initial_state,
   const FirstOrderDubinsMppiKinematicLimits & limits,
-  const FirstOrderDubinsMppiVehicleParams & vehicle_params, int acceleration_delay_steps = 0,
-  const std::vector<float> & acceleration_delay_buffer = {}, float dt = kMppiDt);
+  const FirstOrderDubinsMppiVehicleParams & vehicle_params, float dt = kMppiDt);
 
 [[nodiscard]] std::vector<FirstOrderDubinsMppiControl> shiftNominalControl(
   const std::vector<FirstOrderDubinsMppiControl> & previous, int horizon = kMppiHorizon);
 
+/**
+ * Populate the optimized prefix from post-step geometric plant states. The controls argument is
+ * retained for source compatibility and is not written into the public trajectory fields.
+ */
 [[nodiscard]] Trajectory buildOptimizedTrajectory(
   const Trajectory & input, const std::vector<OptimizedState> & post_step_states,
   const std::vector<FirstOrderDubinsMppiControl> & controls);

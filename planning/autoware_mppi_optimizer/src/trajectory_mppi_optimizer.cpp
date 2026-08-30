@@ -20,6 +20,7 @@
 #include "autoware/mppi_optimizer/first_order_dubins_mppi_vehicle_params_ros.hpp"
 #include "autoware/mppi_optimizer/mppi_debug_markers.hpp"
 
+#include <builtin_interfaces/msg/time.hpp>
 #include <pluginlib/class_list_macros.hpp>
 
 #include <diagnostic_msgs/msg/diagnostic_status.hpp>
@@ -42,6 +43,57 @@ namespace
 
 using autoware::trajectory_processor::plugin::ProcessingResult;
 using autoware_utils_geometry::Segment2d;
+
+constexpr double kStateInputFreshnessSeconds = 0.1;
+
+bool has_nonzero_stamp(const builtin_interfaces::msg::Time & stamp)
+{
+  return stamp.sec != 0 || stamp.nanosec != 0U;
+}
+
+bool is_fresh_state_input(
+  const builtin_interfaces::msg::Time & input_stamp,
+  const builtin_interfaces::msg::Time & odometry_stamp,
+  const builtin_interfaces::msg::Time & trajectory_stamp)
+{
+  if (!has_nonzero_stamp(input_stamp) || !has_nonzero_stamp(odometry_stamp)) {
+    return false;
+  }
+
+  const rclcpp::Time input_time{input_stamp};
+  const auto is_close_to = [&](const builtin_interfaces::msg::Time & reference_stamp) {
+    return std::abs((input_time - rclcpp::Time{reference_stamp}).seconds()) <=
+           kStateInputFreshnessSeconds;
+  };
+  return is_close_to(odometry_stamp) &&
+         (!has_nonzero_stamp(trajectory_stamp) || is_close_to(trajectory_stamp));
+}
+
+bool is_finite_odometry(const nav_msgs::msg::Odometry & odometry)
+{
+  const auto & position = odometry.pose.pose.position;
+  const auto & orientation = odometry.pose.pose.orientation;
+  const auto & linear = odometry.twist.twist.linear;
+  const auto & angular = odometry.twist.twist.angular;
+  return std::isfinite(position.x) && std::isfinite(position.y) && std::isfinite(position.z) &&
+         std::isfinite(orientation.x) && std::isfinite(orientation.y) &&
+         std::isfinite(orientation.z) && std::isfinite(orientation.w) && std::isfinite(linear.x) &&
+         std::isfinite(linear.y) && std::isfinite(linear.z) && std::isfinite(angular.x) &&
+         std::isfinite(angular.y) && std::isfinite(angular.z);
+}
+
+bool is_finite_acceleration(const geometry_msgs::msg::AccelWithCovarianceStamped & acceleration)
+{
+  const auto & linear = acceleration.accel.accel.linear;
+  const auto & angular = acceleration.accel.accel.angular;
+  return std::isfinite(linear.x) && std::isfinite(linear.y) && std::isfinite(linear.z) &&
+         std::isfinite(angular.x) && std::isfinite(angular.y) && std::isfinite(angular.z);
+}
+
+bool is_finite_steering(const autoware_vehicle_msgs::msg::SteeringReport & steering)
+{
+  return std::isfinite(steering.steering_tire_angle);
+}
 
 /** @brief Converts processor parameters into MPPI cost parameters. */
 FirstOrderDubinsMppiCostParams make_cost_params(const trajectory_mppi_optimizer::Params & params)
@@ -75,6 +127,7 @@ FirstOrderDubinsMppiCostParams make_cost_params(const trajectory_mppi_optimizer:
   output.accel_cmd_coeff = static_cast<float>(params.accel_cmd_coeff);
   output.steer_cmd_coeff = static_cast<float>(params.steer_cmd_coeff);
   output.steer_rate_coeff = static_cast<float>(params.steer_rate_coeff);
+  output.overlimit_coeff = static_cast<float>(params.overlimit_coeff);
   output.accel_cmd_std_dev = static_cast<float>(params.accel_cmd_std_dev);
   output.steer_cmd_std_dev = static_cast<float>(params.steer_cmd_std_dev);
   output.accel_cmd_noise_exponent = static_cast<float>(params.accel_cmd_noise_exponent);
@@ -110,7 +163,6 @@ FirstOrderDubinsMppiRuntimeOptions make_runtime_options(
   output.use_last_control_as_nominal = params.use_last_control_as_nominal;
   output.use_temporal_mpt_as_nominal = params.use_temporal_mpt_as_nominal;
   output.prevent_reverse_velocity = params.prevent_reverse_velocity;
-  output.enable_input_delay_compensation = params.enable_input_delay_compensation;
   return output;
 }
 
@@ -125,8 +177,6 @@ FirstOrderDubinsMppiVehicleParams make_vehicle_params(
     static_cast<float>(node.get_parameter("steer_time_constant").as_double());
   output.steer_rate_lim = static_cast<float>(node.get_parameter("steer_rate_lim").as_double());
   output.vel_rate_lim = static_cast<float>(node.get_parameter("vel_rate_lim").as_double());
-  output.acc_time_delay = static_cast<float>(node.get_parameter("acc_time_delay").as_double());
-  output.steer_time_delay = static_cast<float>(node.get_parameter("steer_time_delay").as_double());
   return output;
 }
 
@@ -237,6 +287,16 @@ ProcessingResult TrajectoryMppiOptimizer::process(
   pending_markers_.markers.clear();
   debug_pending_ = false;
 
+  const auto reject_input = [&](const std::string & message) {
+    constexpr auto level = diagnostic_msgs::msg::DiagnosticStatus::WARN;
+    publish_enabled(false);
+    clear_markers(data.candidate_header);
+    publish_status_diagnostic(level, message, rclcpp::Time{data.candidate_header.stamp});
+    RCLCPP_WARN_THROTTLE(
+      get_node_ptr()->get_logger(), *get_node_ptr()->get_clock(), 1000, "%s", message.c_str());
+    return ProcessingResult::Unchanged;
+  };
+
   if (!params_.enabled) {
     publish_enabled(false);
     clear_markers(data.candidate_header);
@@ -244,15 +304,11 @@ ProcessingResult TrajectoryMppiOptimizer::process(
   }
 
   if (!data.current_odometry || !data.tracked_objects || !data.route || !data.lanelet_map_bin) {
-    constexpr auto level = diagnostic_msgs::msg::DiagnosticStatus::WARN;
-    publish_enabled(false);
-    clear_markers(data.candidate_header);
-    publish_status_diagnostic(
-      level, "MPPI input data is not ready", rclcpp::Time{data.candidate_header.stamp});
-    RCLCPP_WARN_THROTTLE(
-      get_node_ptr()->get_logger(), *get_node_ptr()->get_clock(), 5000,
+    return reject_input(
       "MPPI input data is not ready: odometry, tracked objects, route, or map is missing");
-    return ProcessingResult::Unchanged;
+  }
+  if (!is_finite_odometry(*data.current_odometry)) {
+    return reject_input("MPPI rejected non-finite odometry input");
   }
 
   try {
@@ -283,10 +339,48 @@ ProcessingResult TrajectoryMppiOptimizer::process(
     const auto drivable_area =
       extended_route_handler_->get_drivable_area_around_trajectory(input, boundary_query_margin);
 
-    const std::optional<geometry_msgs::msg::AccelWithCovarianceStamped> acceleration =
-      data.current_acceleration ? std::make_optional(*data.current_acceleration) : std::nullopt;
-    const std::optional<autoware_vehicle_msgs::msg::SteeringReport> steering =
-      data.current_steering ? std::make_optional(*data.current_steering) : std::nullopt;
+    std::optional<geometry_msgs::msg::AccelWithCovarianceStamped> acceleration;
+    if (data.current_acceleration) {
+      if (!is_finite_acceleration(*data.current_acceleration)) {
+        return reject_input("MPPI rejected non-finite acceleration input");
+      }
+      if (!is_fresh_state_input(
+            data.current_acceleration->header.stamp, data.current_odometry->header.stamp,
+            data.candidate_header.stamp)) {
+        return reject_input("MPPI rejected stale acceleration input");
+      }
+      last_valid_acceleration_ = *data.current_acceleration;
+      acceleration = last_valid_acceleration_;
+    } else if (
+      last_valid_acceleration_ &&
+      is_fresh_state_input(
+        last_valid_acceleration_->header.stamp, data.current_odometry->header.stamp,
+        data.candidate_header.stamp)) {
+      acceleration = last_valid_acceleration_;
+    } else {
+      return reject_input("MPPI acceleration input is missing or stale");
+    }
+
+    std::optional<autoware_vehicle_msgs::msg::SteeringReport> steering;
+    if (data.current_steering) {
+      if (!is_finite_steering(*data.current_steering)) {
+        return reject_input("MPPI rejected non-finite steering input");
+      }
+      if (!is_fresh_state_input(
+            data.current_steering->stamp, data.current_odometry->header.stamp,
+            data.candidate_header.stamp)) {
+        return reject_input("MPPI rejected stale steering input");
+      }
+      last_valid_steering_ = *data.current_steering;
+      steering = last_valid_steering_;
+    } else if (
+      last_valid_steering_ && is_fresh_state_input(
+                                last_valid_steering_->stamp, data.current_odometry->header.stamp,
+                                data.candidate_header.stamp)) {
+      steering = last_valid_steering_;
+    } else {
+      return reject_input("MPPI steering input is missing or stale");
+    }
 
     const auto velocity_limit = velocity_limit_sub_->take_data();
     auto kinematic_limits =
@@ -393,11 +487,7 @@ void TrajectoryMppiOptimizer::ensure_optimizer()
     std::hypot(max_longitudinal_offset, max_lateral_offset) + cost_params.obstacle_safe_margin;
   object_filter_margin_m_ = std::max(collision_envelope_radius, barrier_envelope_radius);
 
-  const double max_vehicle_delay_s =
-    std::max(vehicle_params.acc_time_delay, vehicle_params.steer_time_delay);
-  const double delay_steps =
-    std::max(0.0, std::round(max_vehicle_delay_s / autoware::mppi_optimizer::detail::kMppiDt));
-  object_filter_prediction_extension_s_ = delay_steps * autoware::mppi_optimizer::detail::kMppiDt;
+  object_filter_prediction_extension_s_ = 0.0;
 }
 
 void TrajectoryMppiOptimizer::publish_enabled(const bool enabled) const

@@ -113,6 +113,9 @@ private:
   std::shared_ptr<autoware_utils_rclcpp::InterProcessPollingSubscriber<VelocityLimit>>
     velocity_limit_sub_;
 
+  std::optional<geometry_msgs::msg::AccelWithCovarianceStamped> last_valid_acceleration_;
+  std::optional<autoware_vehicle_msgs::msg::SteeringReport> last_valid_steering_;
+
   rclcpp::Publisher<Trajectory>::SharedPtr reference_trajectory_pub_;
   rclcpp::Publisher<Trajectory>::SharedPtr nominal_control_trajectory_pub_;
   rclcpp::Publisher<Trajectory>::SharedPtr optimized_trajectory_pub_;

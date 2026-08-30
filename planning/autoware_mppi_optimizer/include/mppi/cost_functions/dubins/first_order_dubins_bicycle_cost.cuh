@@ -54,7 +54,7 @@ struct FirstOrderDubinsBicycleCostParams : public CostParams<2>
    * boundary_threshold. */
   float accel_cmd_coeff = 0.0F;
   float steer_cmd_coeff = 0.0F;
-  /** Direct cost on steer rate [rad/s]: (steer_cmd - steer) / steer_time_constant. */
+  /** Cost on the geometric steering-state derivative produced by the rollout [rad/s]. */
   float steer_rate_coeff = 0.0F;
   /** Shared cost weight for optional velocity, acceleration, and jerk interval violations. */
   float overlimit_coeff = 10000.0F;

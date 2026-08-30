@@ -24,6 +24,7 @@
 
 #include <autoware_perception_msgs/msg/tracked_objects.hpp>
 #include <autoware_planning_msgs/msg/trajectory.hpp>
+#include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
 
 #include <tf2/utils.h>
 
@@ -81,7 +82,6 @@ struct MppiDebugEgoState
  *   <log_dir>/000000_drivable.csv
  *   <log_dir>/000000_objects.csv
  *   <log_dir>/000000_control_history.csv  (legacy vendor history at cycle start)
- *   <log_dir>/000000_delay_buffer.csv     (per-channel FIFOs before optimize)
  *   <log_dir>/000000_applied.csv          (u[0] applied this cycle)
  *   ...
  *
@@ -203,8 +203,6 @@ public:
         out << "steer_time_constant," << vehicle.steer_time_constant << "\n";
         out << "steer_rate_lim," << vehicle.steer_rate_lim << "\n";
         out << "vel_rate_lim," << vehicle.vel_rate_lim << "\n";
-        out << "acc_time_delay," << vehicle.acc_time_delay << "\n";
-        out << "steer_time_delay," << vehicle.steer_time_delay << "\n";
       }
     }
     params_written_ = true;
@@ -229,8 +227,6 @@ public:
       out << "use_temporal_mpt_as_nominal," << (options.use_temporal_mpt_as_nominal ? 1 : 0)
           << "\n";
       out << "prevent_reverse_velocity," << (options.prevent_reverse_velocity ? 1 : 0) << "\n";
-      out << "enable_input_delay_compensation," << (options.enable_input_delay_compensation ? 1 : 0)
-          << "\n";
     }
     runtime_written_ = true;
   }
@@ -244,9 +240,8 @@ public:
     const std::vector<Segment> & road_borders, const std::vector<Segment> & drivable_area,
     const autoware_perception_msgs::msg::TrackedObjects & tracked_objects,
     const float hist_accel_tm2, const float hist_steer_tm2, const float hist_accel_tm1,
-    const float hist_steer_tm1, const std::vector<float> & delay_accel_cmd,
-    const std::vector<float> & delay_steer_cmd, const float applied_accel_cmd,
-    const float applied_steer_cmd, const FirstOrderDubinsMppiKinematicLimits & kinematic_limits)
+    const float hist_steer_tm1, const float applied_accel_cmd, const float applied_steer_cmd,
+    const FirstOrderDubinsMppiKinematicLimits & kinematic_limits)
   {
     if (!enabled_) {
       return;
@@ -280,8 +275,6 @@ public:
     writeControlHistoryCsv(
       directory_ + "/" + frame_tag + "_control_history.csv", hist_accel_tm2, hist_steer_tm2,
       hist_accel_tm1, hist_steer_tm1);
-    writeNominalCsv(
-      directory_ + "/" + frame_tag + "_delay_buffer.csv", delay_accel_cmd, delay_steer_cmd);
     writeAppliedCsv(
       directory_ + "/" + frame_tag + "_applied.csv", applied_accel_cmd, applied_steer_cmd);
     writeKinematicLimitsCsv(

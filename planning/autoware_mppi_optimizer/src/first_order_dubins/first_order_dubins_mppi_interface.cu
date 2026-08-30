@@ -33,10 +33,6 @@
 #include <rclcpp/logging.hpp>
 
 #include <geometry_msgs/msg/accel_with_covariance_stamped.hpp>
-#include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
-
-#include <tf2/LinearMath/Quaternion.h>
-#include <tf2/utils.h>
 
 #include <algorithm>
 #include <array>
@@ -389,46 +385,6 @@ void fromHostState(DYN::state_array & x, const FirstOrderDubinsMppiState & state
   x(static_cast<int>(FirstOrderDubinsBicycleParams::StateIndex::VEL_X)) = state.vel_x;
 }
 
-float yawFromOdometry(const Odometry & odometry)
-{
-  return static_cast<float>(tf2::getYaw(odometry.pose.pose.orientation));
-}
-
-float longitudinalAccelerationMps2(
-  const std::optional<geometry_msgs::msg::AccelWithCovarianceStamped> & acceleration)
-{
-  if (!acceleration.has_value()) {
-    return 0.0F;
-  }
-  return static_cast<float>(acceleration->accel.accel.linear.x);
-}
-
-float steeringTireAngleRad(
-  const std::optional<autoware_vehicle_msgs::msg::SteeringReport> & steering_status)
-{
-  if (!steering_status.has_value()) {
-    return 0.0F;
-  }
-  return steering_status->steering_tire_angle;
-}
-
-/**
- * Sampled ZOH dead-time length at time t:
- *   N(t) = t/dt - floor((t - τ)/dt)
- * Prefer floor (not C int truncation) so negative intermediates stay correct.
- * On an exact grid t = n·dt this equals ceil(τ/dt).
- */
-int sampledDelaySteps(const float t, const float delay_s, const float dt)
-{
-  if (delay_s <= 0.0F || dt <= 0.0F) {
-    return 0;
-  }
-  const double steps = static_cast<double>(t) / static_cast<double>(dt) -
-                       std::floor(static_cast<double>(t - delay_s) / static_cast<double>(dt));
-  const int n = static_cast<int>(std::lround(steps));
-  return clampInputDelaySteps(std::max(0, n));
-}
-
 void checkCuda(const char * where)
 {
   const cudaError_t err = cudaGetLastError();
@@ -762,8 +718,6 @@ struct FirstOrderDubinsMppiInterface::Impl
   bool use_temporal_mpt_as_nominal{false};
   /** Prevent acceleration commands and integrated states from producing reverse velocity. */
   bool prevent_reverse_velocity{true};
-  /** When false, force N_acc = N_steer = 0 (vehicle delay params ignored). */
-  bool enable_input_delay_compensation{true};
   detail::TemporalMptNominalSeeder temporal_mpt_nominal_seeder;
   /** Fill debug.rollouts with top-K weighted samples (CPU replay). Offline retune only by default.
    */
@@ -776,33 +730,17 @@ struct FirstOrderDubinsMppiInterface::Impl
   std::vector<float> logged_nominal_accel;
   std::vector<float> logged_nominal_steer;
 
-  /**
-   * Per-channel discrete ZOH input delay (in dynamics taps, not host IC pre-roll):
-   * N_acc(t) / N_steer(t) via sampledDelaySteps; FIFOs seed the delay pipes in x.
-   */
-  int acc_delay_steps{0};
-  int steer_delay_steps{0};
-  std::vector<float> accel_delay_buffer;
-  std::vector<float> steer_delay_buffer;
-  bool delay_buffer_seeded{false};
-
   /** Pending offline seeds applied after setup() / step_count==0 reset. */
   bool pending_control_history{false};
   float pending_hist_accel_tm2{0.0F};
   float pending_hist_steer_tm2{0.0F};
   float pending_hist_accel_tm1{0.0F};
   float pending_hist_steer_tm1{0.0F};
-  bool pending_delay_buffer{false};
-  std::vector<float> pending_delay_accel;
-  std::vector<float> pending_delay_steer;
-
   /** Snapshots written to debug CSVs for exact offline replay. */
   float logged_hist_accel_tm2{0.0F};
   float logged_hist_steer_tm2{0.0F};
   float logged_hist_accel_tm1{0.0F};
   float logged_hist_steer_tm1{0.0F};
-  std::vector<float> logged_delay_accel;
-  std::vector<float> logged_delay_steer;
   float logged_applied_accel{0.0F};
   float logged_applied_steer{0.0F};
 
@@ -824,19 +762,6 @@ struct FirstOrderDubinsMppiInterface::Impl
       vehicle_params.wheel_base, vehicle_params.ego_axle_to_box_center,
       vehicle_params.acc_time_constant, vehicle_params.steer_time_constant,
       vehicle_params.steer_rate_lim);
-
-    acc_delay_steps = enable_input_delay_compensation
-                        ? sampledDelaySteps(0.0F, vehicle_params.acc_time_delay, kDt)
-                        : 0;
-    steer_delay_steps = enable_input_delay_compensation
-                          ? sampledDelaySteps(0.0F, vehicle_params.steer_time_delay, kDt)
-                          : 0;
-    dyn.acc_delay_steps = acc_delay_steps;
-    dyn.steer_delay_steps = steer_delay_steps;
-    model.setParams(dyn);
-    accel_delay_buffer.clear();
-    steer_delay_buffer.clear();
-    delay_buffer_seeded = false;
 
     cost.GPUSetup();
 
@@ -899,7 +824,6 @@ struct FirstOrderDubinsMppiInterface::Impl
       "MPPI GPU initialized (horizon=%d, rollouts=%d, dt=%.2f, lambda=%.1f, "
       "wheel_base=%.2f, max_steer=%.2f, accel_std=%.3f, steer_std=%.3f, acc_tau=%.2f, "
       "steer_tau=%.2f, "
-      "acc_delay=%.3f (%d steps), steer_delay=%.3f (%d steps), "
       "steer_rate_lim=%.2f, vel_rate_lim=%.2f, ego=%.2fx%.2f, axle_to_center=%.2f, "
       "boundary_threshold=%.2f, obs_margin=%.2f, road_border_margin=%.2f, "
       "lateral_barrier=%.2f@%.2f, obs_barrier=%.2f@%.2f, road_barrier=%.2f@%.2f, "
@@ -907,8 +831,7 @@ struct FirstOrderDubinsMppiInterface::Impl
       kMppiHorizon, kNumRollouts, kDt, user_cost_params_.lambda, vehicle_params.wheel_base,
       vehicle_params.max_steer_angle, user_cost_params_.accel_cmd_std_dev,
       user_cost_params_.steer_cmd_std_dev, vehicle_params.acc_time_constant,
-      vehicle_params.steer_time_constant, vehicle_params.acc_time_delay, acc_delay_steps,
-      vehicle_params.steer_time_delay, steer_delay_steps, vehicle_params.steer_rate_lim,
+      vehicle_params.steer_time_constant, vehicle_params.steer_rate_lim,
       vehicle_params.vel_rate_lim, vehicle_params.ego_length, vehicle_params.ego_width,
       vehicle_params.ego_axle_to_box_center, cost_params.boundary_threshold,
       cost_params.obstacle_collision_margin, cost_params.road_border_collision_margin,
@@ -924,24 +847,7 @@ struct FirstOrderDubinsMppiInterface::Impl
     step_count = 0;
     u_opt.setZero();
     sim_time = 0.0F;
-    accel_delay_buffer.clear();
-    steer_delay_buffer.clear();
-    delay_buffer_seeded = false;
     temporal_mpt_nominal_seeder.resetWarmStart();
-  }
-
-  void syncDelayStepsToModel()
-  {
-    if (enable_input_delay_compensation) {
-      acc_delay_steps = sampledDelaySteps(sim_time, vehicle_params.acc_time_delay, kDt);
-      steer_delay_steps = sampledDelaySteps(sim_time, vehicle_params.steer_time_delay, kDt);
-    } else {
-      acc_delay_steps = 0;
-      steer_delay_steps = 0;
-    }
-    dyn.acc_delay_steps = acc_delay_steps;
-    dyn.steer_delay_steps = steer_delay_steps;
-    model.setParams(dyn);
   }
 
   /// @brief Elevate active limits to hard rollout constraints. If no dynamic limit is active,
@@ -963,69 +869,6 @@ struct FirstOrderDubinsMppiInterface::Impl
     model.setParams(dyn);
   }
 
-  void resizeChannelDelayBuffer(std::vector<float> & buffer, const int n, const float hold)
-  {
-    if (n <= 0) {
-      buffer.clear();
-      return;
-    }
-    const size_t target = static_cast<size_t>(n);
-    if (buffer.size() == target) {
-      return;
-    }
-    if (buffer.size() < target) {
-      buffer.insert(buffer.begin(), target - buffer.size(), hold);
-    } else {
-      buffer.erase(
-        buffer.begin(), buffer.begin() + static_cast<std::ptrdiff_t>(buffer.size() - target));
-    }
-  }
-
-  void ensureDelayBufferSeeded()
-  {
-    if (acc_delay_steps <= 0 && steer_delay_steps <= 0) {
-      accel_delay_buffer.clear();
-      steer_delay_buffer.clear();
-      delay_buffer_seeded = true;
-      return;
-    }
-    const float accel_hold =
-      x(static_cast<int>(FirstOrderDubinsBicycleParams::StateIndex::ACCELERATION));
-    const float steer_hold =
-      x(static_cast<int>(FirstOrderDubinsBicycleParams::StateIndex::STEER_ANGLE));
-    if (!delay_buffer_seeded) {
-      if (acc_delay_steps > 0) {
-        accel_delay_buffer.assign(static_cast<size_t>(acc_delay_steps), accel_hold);
-      } else {
-        accel_delay_buffer.clear();
-      }
-      if (steer_delay_steps > 0) {
-        steer_delay_buffer.assign(static_cast<size_t>(steer_delay_steps), steer_hold);
-      } else {
-        steer_delay_buffer.clear();
-      }
-      delay_buffer_seeded = true;
-      return;
-    }
-    resizeChannelDelayBuffer(accel_delay_buffer, acc_delay_steps, accel_hold);
-    resizeChannelDelayBuffer(steer_delay_buffer, steer_delay_steps, steer_hold);
-  }
-
-  void loadDelayPipesIntoState()
-  {
-    using S = FirstOrderDubinsBicycleParams::StateIndex;
-    for (int i = 0; i < FirstOrderDubinsBicycleParams::kMaxInputDelaySteps; ++i) {
-      x(static_cast<int>(S::ACCEL_CMD_D0) + i) = 0.0F;
-      x(static_cast<int>(S::STEER_CMD_D0) + i) = 0.0F;
-    }
-    for (int i = 0; i < acc_delay_steps; ++i) {
-      x(static_cast<int>(S::ACCEL_CMD_D0) + i) = accel_delay_buffer[static_cast<size_t>(i)];
-    }
-    for (int i = 0; i < steer_delay_steps; ++i) {
-      x(static_cast<int>(S::STEER_CMD_D0) + i) = steer_delay_buffer[static_cast<size_t>(i)];
-    }
-  }
-
   void applyPendingControlHistory()
   {
     if (!pending_control_history || !controller) {
@@ -1035,57 +878,6 @@ struct FirstOrderDubinsMppiInterface::Impl
       pending_hist_accel_tm2, pending_hist_steer_tm2, pending_hist_accel_tm1,
       pending_hist_steer_tm1);
     pending_control_history = false;
-  }
-
-  void applyPendingDelayBuffer()
-  {
-    if (!pending_delay_buffer) {
-      return;
-    }
-    pending_delay_buffer = false;
-    if (pending_delay_accel.empty() && pending_delay_steer.empty()) {
-      accel_delay_buffer.clear();
-      steer_delay_buffer.clear();
-      delay_buffer_seeded = false;
-      return;
-    }
-    if (acc_delay_steps > 0) {
-      if (pending_delay_accel.empty()) {
-        accel_delay_buffer.assign(
-          static_cast<size_t>(acc_delay_steps),
-          x(static_cast<int>(FirstOrderDubinsBicycleParams::StateIndex::ACCELERATION)));
-      } else {
-        const float accel_hold = pending_delay_accel.back();
-        accel_delay_buffer.resize(static_cast<size_t>(acc_delay_steps));
-        for (int i = 0; i < acc_delay_steps; ++i) {
-          accel_delay_buffer[static_cast<size_t>(i)] =
-            static_cast<size_t>(i) < pending_delay_accel.size()
-              ? pending_delay_accel[static_cast<size_t>(i)]
-              : accel_hold;
-        }
-      }
-    } else {
-      accel_delay_buffer.clear();
-    }
-    if (steer_delay_steps > 0) {
-      if (pending_delay_steer.empty()) {
-        steer_delay_buffer.assign(
-          static_cast<size_t>(steer_delay_steps),
-          x(static_cast<int>(FirstOrderDubinsBicycleParams::StateIndex::STEER_ANGLE)));
-      } else {
-        const float steer_hold = pending_delay_steer.back();
-        steer_delay_buffer.resize(static_cast<size_t>(steer_delay_steps));
-        for (int i = 0; i < steer_delay_steps; ++i) {
-          steer_delay_buffer[static_cast<size_t>(i)] =
-            static_cast<size_t>(i) < pending_delay_steer.size()
-              ? pending_delay_steer[static_cast<size_t>(i)]
-              : steer_hold;
-        }
-      }
-    } else {
-      steer_delay_buffer.clear();
-    }
-    delay_buffer_seeded = true;
   }
 
   void snapshotControlHistoryForLog()
@@ -1099,60 +891,6 @@ struct FirstOrderDubinsMppiInterface::Impl
     }
     controller->copyControlHistory(
       logged_hist_accel_tm2, logged_hist_steer_tm2, logged_hist_accel_tm1, logged_hist_steer_tm1);
-  }
-
-  void snapshotDelayBufferForLog()
-  {
-    logged_delay_accel = accel_delay_buffer;
-    logged_delay_steer = steer_delay_buffer;
-    // Pad unequal channel lengths so the two-column CSV writer stays rectangular.
-    const size_t n = std::max(logged_delay_accel.size(), logged_delay_steer.size());
-    if (n == 0U) {
-      return;
-    }
-    const float accel_pad = logged_delay_accel.empty() ? 0.0F : logged_delay_accel.back();
-    const float steer_pad = logged_delay_steer.empty() ? 0.0F : logged_delay_steer.back();
-    while (logged_delay_accel.size() < n) {
-      logged_delay_accel.push_back(accel_pad);
-    }
-    while (logged_delay_steer.size() < n) {
-      logged_delay_steer.push_back(steer_pad);
-    }
-  }
-
-  void pushDelayedInput(const DYN::control_array & u)
-  {
-    const int accel_idx =
-      static_cast<int>(FirstOrderDubinsBicycleParams::ControlIndex::ACCELERATION_CMD);
-    const int steer_idx = static_cast<int>(FirstOrderDubinsBicycleParams::ControlIndex::STEER_CMD);
-    if (acc_delay_steps > 0) {
-      ensureDelayBufferSeeded();
-      if (accel_delay_buffer.size() != static_cast<size_t>(acc_delay_steps)) {
-        resizeChannelDelayBuffer(
-          accel_delay_buffer, acc_delay_steps,
-          x(static_cast<int>(FirstOrderDubinsBicycleParams::StateIndex::ACCELERATION)));
-      }
-      for (int i = 0; i < acc_delay_steps - 1; ++i) {
-        accel_delay_buffer[static_cast<size_t>(i)] = accel_delay_buffer[static_cast<size_t>(i + 1)];
-      }
-      accel_delay_buffer[static_cast<size_t>(acc_delay_steps - 1)] = u(accel_idx);
-    } else {
-      accel_delay_buffer.clear();
-    }
-    if (steer_delay_steps > 0) {
-      ensureDelayBufferSeeded();
-      if (steer_delay_buffer.size() != static_cast<size_t>(steer_delay_steps)) {
-        resizeChannelDelayBuffer(
-          steer_delay_buffer, steer_delay_steps,
-          x(static_cast<int>(FirstOrderDubinsBicycleParams::StateIndex::STEER_ANGLE)));
-      }
-      for (int i = 0; i < steer_delay_steps - 1; ++i) {
-        steer_delay_buffer[static_cast<size_t>(i)] = steer_delay_buffer[static_cast<size_t>(i + 1)];
-      }
-      steer_delay_buffer[static_cast<size_t>(steer_delay_steps - 1)] = u(steer_idx);
-    } else {
-      steer_delay_buffer.clear();
-    }
   }
 
   void seedNominalControlFromLastOptimized()
@@ -1235,8 +973,7 @@ struct FirstOrderDubinsMppiInterface::Impl
       nominal[static_cast<size_t>(t)] = {u_nom(accel_idx, t), u_nom(steer_idx, t)};
     }
     const auto filtered = detail::filterNominalControlWithKinematicLimits(
-      nominal, ego, active_kinematic_limits, vehicle_params, acc_delay_steps, accel_delay_buffer,
-      kDt);
+      nominal, ego, active_kinematic_limits, vehicle_params, kDt);
     for (int t = 0; t < kMppiHorizon; ++t) {
       u_nom(accel_idx, t) = filtered[static_cast<size_t>(t)].accel_cmd;
       u_nom(steer_idx, t) = filtered[static_cast<size_t>(t)].steer_cmd;
@@ -1366,15 +1103,12 @@ struct FirstOrderDubinsMppiInterface::Impl
     // ignore_drivable_area remains an ablation API flag; it does not reintroduce road borders.
     (void)ignore_drivable_area;
 
-    // Optimize from measured ego; delay is applied in dynamics (no reference time shift).
+    // Optimize from the measured ego state without an actuator-delay reference shift.
     tracking_start_idx = 0U;
     if (step_count == 0) {
       resetTrackingState();
     }
-    // Offline retune seeds must land after the step_count==0 reset (which clears the delay FIFO).
     applyPendingControlHistory();
-    syncDelayStepsToModel();
-    applyPendingDelayBuffer();
 
     const auto initial_state =
       detail::makeInitialState(odometry, acceleration, steering_status, vehicle_params);
@@ -1411,8 +1145,8 @@ struct FirstOrderDubinsMppiInterface::Impl
       active_velocity_limit_profile.active &&
       (same_uniform_velocity_limit || same_pointwise_velocity_limits);
     active_velocity_limit_profile = detail::buildActiveVelocityLimitProfile(
-      profile_seed, initial_state, active_kinematic_limits, vehicle_params, acc_delay_steps,
-      accel_delay_buffer, kDt, keep_velocity_limit_active, profile_reference_velocities);
+      profile_seed, initial_state, active_kinematic_limits, vehicle_params, kDt,
+      keep_velocity_limit_active, profile_reference_velocities);
     detail::applyActiveVelocityLimitProfile(diffusion_reference, active_velocity_limit_profile);
     seedNominalControl(diffusion_reference, tracking_start_idx, initial_state);
     applyActiveVelocityLimitToNominal();
@@ -1429,9 +1163,6 @@ struct FirstOrderDubinsMppiInterface::Impl
       initial_state.acceleration;
     x(static_cast<int>(FirstOrderDubinsBicycleParams::StateIndex::STEER_ANGLE)) =
       initial_state.steering;
-    ensureDelayBufferSeeded();
-    loadDelayPipesIntoState();
-    snapshotDelayBufferForLog();
   }
 
   void uploadBoundarySegments()
@@ -1454,7 +1185,7 @@ struct FirstOrderDubinsMppiInterface::Impl
     // unfiltered MPPI result is independent of these Savitzky–Golay edge taps.
     snapshotControlHistoryForLog();
 
-    // Measured ego IC; per-channel delay lives in dynamics taps (no host pre-roll / ref shift).
+    // The rollout starts from the validated and clamped measured ego state.
     detail::InitialState ego;
     ego.x = x(static_cast<int>(FirstOrderDubinsBicycleParams::StateIndex::POS_X));
     ego.y = x(static_cast<int>(FirstOrderDubinsBicycleParams::StateIndex::POS_Y));
@@ -1563,7 +1294,6 @@ struct FirstOrderDubinsMppiInterface::Impl
 
     DYN::control_array u_apply = u_opt_traj.col(0);
     model.enforceConstraints(x, u_apply);
-    pushDelayedInput(u_apply);
 
     DYN::state_array x_next = model.getZeroState();
     DYN::state_array xdot = model.getZeroState();
@@ -1679,24 +1409,11 @@ void FirstOrderDubinsMppiInterface::setRuntimeOptions(
     throw std::runtime_error("FirstOrderDubinsMppiInterface implementation is missing");
   }
   impl_->use_temporal_mpt_as_nominal = options.use_temporal_mpt_as_nominal;
-  impl_->enable_input_delay_compensation = options.enable_input_delay_compensation;
   impl_->min_optimization_length = options.min_optimization_length;
   impl_->dyn.prevent_reverse_velocity = options.prevent_reverse_velocity;
-  if (impl_->initialized) {
-    impl_->syncDelayStepsToModel();
-    if (!impl_->enable_input_delay_compensation) {
-      impl_->accel_delay_buffer.clear();
-      impl_->steer_delay_buffer.clear();
-      impl_->delay_buffer_seeded = false;
-      impl_->loadDelayPipesIntoState();
-    }
-  }
   RCLCPP_INFO(
-    mppiLogger(),
-    "MPPI nominal seed: use_temporal_mpt_as_nominal=%s enable_input_delay_compensation=%s "
-    "prevent_reverse_velocity=%s",
+    mppiLogger(), "MPPI nominal seed: use_temporal_mpt_as_nominal=%s prevent_reverse_velocity=%s",
     options.use_temporal_mpt_as_nominal ? "true" : "false",
-    options.enable_input_delay_compensation ? "true" : "false",
     options.prevent_reverse_velocity ? "true" : "false");
 }
 void FirstOrderDubinsMppiInterface::setDebugTrajectoryLogging(
@@ -1740,7 +1457,6 @@ void FirstOrderDubinsMppiInterface::setAblationOptions(
   runtime.use_last_control_as_nominal = use_last_control_as_nominal;
   runtime.use_temporal_mpt_as_nominal = impl_->use_temporal_mpt_as_nominal;
   runtime.prevent_reverse_velocity = impl_->prevent_reverse_velocity;
-  runtime.enable_input_delay_compensation = impl_->enable_input_delay_compensation;
   impl_->debug_trajectory_logger.writeRuntimeOptionsOnce(runtime);
 }
 
@@ -1777,19 +1493,6 @@ void FirstOrderDubinsMppiInterface::setControlHistory(
   if (impl_->controller) {
     impl_->applyPendingControlHistory();
   }
-}
-
-void FirstOrderDubinsMppiInterface::setInputDelayBuffer(
-  const std::vector<float> & accel_cmd, const std::vector<float> & steer_cmd)
-{
-  if (!impl_) {
-    throw std::runtime_error("FirstOrderDubinsMppiInterface implementation is missing");
-  }
-  // Always defer until updateDiffusionReference (after step_count==0 reset) so offline seeds
-  // are not wiped by resetTrackingState.
-  impl_->pending_delay_accel = accel_cmd;
-  impl_->pending_delay_steer = steer_cmd;
-  impl_->pending_delay_buffer = true;
 }
 
 bool FirstOrderDubinsMppiInterface::copyLastOptimizedControl(
@@ -1965,22 +1668,6 @@ FirstOrderDubinsMppiOptimizationResult FirstOrderDubinsMppiInterface::optimizeTr
   }
 
   Trajectory output = detail::buildOptimizedTrajectory(input, optimized_states, optimized_controls);
-  if (impl_->active_velocity_limit_profile.active) {
-    // buildOptimizedTrajectory intentionally preserves the suffix outside the MPPI horizon.
-    // An active velocity profile must not allow that suffix to jump back to its input speed.
-    const auto & profile = impl_->active_velocity_limit_profile;
-    for (std::size_t index = num_points; index < output.points.size(); ++index) {
-      auto & point = output.points[index];
-      if (index < profile.velocities.size()) {
-        point.longitudinal_velocity_mps = profile.velocities[index];
-        point.acceleration_mps2 = profile.accelerations[index];
-      } else {
-        point.longitudinal_velocity_mps = profile.target_velocity;
-        point.acceleration_mps2 = 0.0F;
-      }
-    }
-  }
-
   // Validate only states that come from getActualStateSeq. The host-extrapolated x_final
   // (vendor GPU/host horizon mismatch) is appended so the published path matches the DP
   // length, but it is not an MPPI-scored state and often sits >boundary_threshold off the
@@ -2013,12 +1700,7 @@ FirstOrderDubinsMppiOptimizationResult FirstOrderDubinsMppiInterface::optimizeTr
     std::chrono::duration<double, std::milli>(std::chrono::steady_clock::now() - start_time)
       .count();
 
-  const auto initial_effective_maximum =
-    !impl_->effective_max_velocity_by_reference_point.empty()
-      ? impl_->effective_max_velocity_by_reference_point.front()
-      : std::nullopt;
-  detail::setInitialEngageVelocity(output, initial_effective_maximum);
-
+  detail::setInitialEngageVelocity(output);
   result.trajectory = output;
   result.debug.reference_trajectory = input;
   result.debug.optimized_trajectory = output;
@@ -2055,13 +1737,13 @@ FirstOrderDubinsMppiOptimizationResult FirstOrderDubinsMppiInterface::optimizeTr
   }
 
   MppiDebugEgoState ego;
-  ego.x = odometry.pose.pose.position.x;
-  ego.y = odometry.pose.pose.position.y;
+  ego.x = x_at_optimization(pos_x_idx);
+  ego.y = x_at_optimization(pos_y_idx);
   ego.z = odometry.pose.pose.position.z;
-  ego.yaw = yawFromOdometry(odometry);
-  ego.v = odometry.twist.twist.linear.x;
-  ego.accel = longitudinalAccelerationMps2(acceleration);
-  ego.steer = steeringTireAngleRad(steering_status);
+  ego.yaw = x_at_optimization(yaw_idx);
+  ego.v = x_at_optimization(vel_x_idx);
+  ego.accel = x_at_optimization(accel_state_idx);
+  ego.steer = x_at_optimization(steer_x_idx);
   impl_->debug_trajectory_logger.writeParamsOnce(impl_->user_cost_params_, impl_->vehicle_params);
   {
     FirstOrderDubinsMppiRuntimeOptions runtime{};
@@ -2074,7 +1756,6 @@ FirstOrderDubinsMppiOptimizationResult FirstOrderDubinsMppiInterface::optimizeTr
     runtime.use_last_control_as_nominal = impl_->use_last_control_as_nominal;
     runtime.use_temporal_mpt_as_nominal = impl_->use_temporal_mpt_as_nominal;
     runtime.prevent_reverse_velocity = impl_->prevent_reverse_velocity;
-    runtime.enable_input_delay_compensation = impl_->enable_input_delay_compensation;
     impl_->debug_trajectory_logger.writeRuntimeOptionsOnce(runtime);
   }
   impl_->debug_trajectory_logger.logFrame(
@@ -2082,8 +1763,8 @@ FirstOrderDubinsMppiOptimizationResult FirstOrderDubinsMppiInterface::optimizeTr
     result.debug.nominal_trajectory, ego, result.debug.baseline_cost, impl_->logged_nominal_accel,
     impl_->logged_nominal_steer, road_borders, drivable_area, tracked_objects,
     impl_->logged_hist_accel_tm2, impl_->logged_hist_steer_tm2, impl_->logged_hist_accel_tm1,
-    impl_->logged_hist_steer_tm1, impl_->logged_delay_accel, impl_->logged_delay_steer,
-    impl_->logged_applied_accel, impl_->logged_applied_steer, impl_->active_kinematic_limits);
+    impl_->logged_hist_steer_tm1, impl_->logged_applied_accel, impl_->logged_applied_steer,
+    impl_->active_kinematic_limits);
 
   const auto validation_reasons = to_string(result.debug.validation.reasons);
   const auto cost_breakdown = formatCostBreakdown(result.debug.cost_breakdown);

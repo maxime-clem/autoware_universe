@@ -1,7 +1,7 @@
 /**:
   ros__parameters:
     mppi_optimizer:
-      enabled: false
+      enabled: true
       shadow_mode: false
       limit_velocity_from_map: false
       # Aligned debug override arrays: lanelet ID -> maximum velocity [m/s].
@@ -31,12 +31,12 @@
       longitudinal_jerk_coeff: 100.0
       accel_cmd_coeff: 50.0
       steer_cmd_coeff: 250.0
-      steer_rate_coeff: 20000.0
+      steer_rate_coeff: 100000.0
       # Shared deadband-quadratic cost for optional VelocityLimit bounds.
       overlimit_coeff: 10000.0
       # MPPI control-sample noise std-devs around the nominal (u_nom).
       accel_cmd_std_dev: 0.1
-      steer_cmd_std_dev: 0.02
+      steer_cmd_std_dev: 0.01
       # Power-law PSD exponents (0 = white, 1 = pink, 2 = brown) for colored noise.
       accel_cmd_noise_exponent: 1.0
       steer_cmd_noise_exponent: 1.0
@@ -53,8 +53,6 @@
 
       nominal_curvature_min_chord_length_m: 1.5
 
-      # Delays still come from simulator_model when this is true.
-      enable_input_delay_compensation: true
       prevent_reverse_velocity: true
 
       ignore_obstacles: false

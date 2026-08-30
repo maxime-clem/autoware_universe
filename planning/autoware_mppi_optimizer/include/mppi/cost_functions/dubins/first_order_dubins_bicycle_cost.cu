@@ -193,32 +193,17 @@ __host__ __device__ float lateralBoundaryBarrierCost(
 
 template <class PARAMS_T>
 __host__ __device__ void comfortTerms(
-  const PARAMS_T & params, const float * u, const float * y, float & lateral_accel,
+  const PARAMS_T & params, const float * /*u*/, const float * y, float & lateral_accel,
   float & lateral_jerk, float & longitudinal_jerk, float & steer_rate)
 {
   const float v = y[static_cast<int>(O::BASELINK_VEL_B_X)];
   const float steer = y[static_cast<int>(O::STEER_ANGLE)];
-  const float accel = y[static_cast<int>(O::ACCELERATION)];
-  const float accel_cmd = u[static_cast<int>(C::ACCELERATION_CMD)];
-  const float steer_cmd = u[static_cast<int>(C::STEER_CMD)];
-
-  const float accel_tau = fmaxf(params.accel_time_constant, 1.0E-4F);
-  const float steer_tau = fmaxf(params.steer_time_constant, 1.0E-4F);
   const float wheel_base = fmaxf(params.wheel_base, 1.0E-4F);
 
-  longitudinal_jerk = (accel_cmd - accel) / accel_tau;
-
-  steer_rate = clampSteerRate(params, (steer_cmd - steer) / steer_tau);
-  const float curvature = tanf(steer) / wheel_base;
-#ifdef __CUDA_ARCH__
-  const float sec_sq = 1.0F / fmaxf(cosf(steer) * cosf(steer), 1.0E-6F);
-#else
-  const float sec_sq = 1.0F / std::max(std::cos(steer) * std::cos(steer), 1.0E-6F);
-#endif
-  const float curvature_dot = sec_sq * steer_rate / wheel_base;
-
-  lateral_accel = v * v * curvature;
-  lateral_jerk = v * v * curvature_dot + 3.0F * v * accel * curvature;
+  lateral_accel = v * v * tanf(steer) / wheel_base;
+  lateral_jerk = y[static_cast<int>(O::LATERAL_JERK)];
+  longitudinal_jerk = y[static_cast<int>(O::LONGITUDINAL_JERK)];
+  steer_rate = y[static_cast<int>(O::STEER_RATE)];
 }
 }  // namespace
 

@@ -44,11 +44,8 @@ struct FirstOrderDubinsMppiRuntimeOptions
   bool use_temporal_mpt_as_nominal{false};
   /** Prevent MPPI rollouts from integrating longitudinal velocity below zero. */
   bool prevent_reverse_velocity{true};
-  /**
-   * When false, ignore vehicle acc/steer time delays in the MPPI plant (N_acc = N_steer = 0).
-   * Vehicle τ (first-order lag) is unchanged. Default true preserves delay compensation.
-   */
-  bool enable_input_delay_compensation{true};
+  /** Legacy API compatibility only. The MPPI plant always uses zero input delay. */
+  bool enable_input_delay_compensation{false};
 };
 
 }  // namespace autoware::mppi_optimizer

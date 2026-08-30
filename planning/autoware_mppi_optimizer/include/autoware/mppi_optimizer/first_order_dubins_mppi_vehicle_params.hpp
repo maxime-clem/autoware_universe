@@ -34,6 +34,7 @@ struct FirstOrderDubinsMppiVehicleParams
   float steer_time_constant{0.27F};
   float steer_rate_lim{5.0F};
   float vel_rate_lim{7.0F};
+  /** Legacy configuration fields. The zero-delay MPPI plant ignores these values. */
   float acc_time_delay{0.1F};
   float steer_time_delay{0.24F};
 

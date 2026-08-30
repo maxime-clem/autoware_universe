@@ -16,6 +16,7 @@
 #define AUTOWARE__MPPI_OPTIMIZER__PREDICTED_OBJECTS_OBSTACLES_HPP_
 
 #include <autoware_perception_msgs/msg/predicted_objects.hpp>
+#include <tf2_geometry_msgs/tf2_geometry_msgs.hpp>
 
 #include <tf2/utils.h>
 

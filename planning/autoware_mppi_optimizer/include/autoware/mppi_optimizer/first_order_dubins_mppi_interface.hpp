@@ -194,7 +194,7 @@ struct FirstOrderDubinsMppiDebug
 {
   Trajectory reference_trajectory;
   Trajectory optimized_trajectory;
-  /** Open-loop rollout of the seeded u_nom warm-start (accel/steer cmds in a / front_wheel). */
+  /** Open-loop plant-state rollout of the seeded u_nom warm-start. */
   Trajectory nominal_trajectory;
   std::vector<std::pair<float, float>> optimal_horizon;
   std::vector<FirstOrderDubinsMppiRollout> rollouts;
@@ -312,14 +312,6 @@ public:
    *        Order: (accel/steer) at t-2, then (accel/steer) at t-1.
    */
   void setControlHistory(float accel_tm2, float steer_tm2, float accel_tm1, float steer_tm1);
-
-  /**
-   * @brief Seed per-channel input-delay FIFOs with already-sent commands (oldest first).
-   *        Accel uses the first N_acc samples; steer uses the first N_steer samples.
-   *        Empty clears / disables forced seeding (falls back to measured hold).
-   */
-  void setInputDelayBuffer(
-    const std::vector<float> & accel_cmd, const std::vector<float> & steer_cmd);
 
   /**
    * @brief Copy the last optimized control sequence (after optimizeTrajectory / computeStep).

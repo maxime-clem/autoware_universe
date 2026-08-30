@@ -7,67 +7,6 @@ namespace
 using S = FirstOrderDubinsBicycleParams::StateIndex;
 using C = FirstOrderDubinsBicycleParams::ControlIndex;
 
-__host__ __device__ inline int accelDelayTapIndex(const int i)
-{
-  return static_cast<int>(S::ACCEL_CMD_D0) + i;
-}
-
-__host__ __device__ inline int steerDelayTapIndex(const int i)
-{
-  return static_cast<int>(S::STEER_CMD_D0) + i;
-}
-
-/** Resolve plant-facing commands: front of each delay pipe, or raw u when N=0. */
-__host__ __device__ void resolveDelayedControl(
-  const FirstOrderDubinsBicycleParams & p, const float * state, const float * control,
-  float & accel_cmd, float & steer_cmd)
-{
-  accel_cmd = control[static_cast<int>(C::ACCELERATION_CMD)];
-  steer_cmd = control[static_cast<int>(C::STEER_CMD)];
-  const int n_acc = clampInputDelaySteps(p.acc_delay_steps);
-  const int n_steer = clampInputDelaySteps(p.steer_delay_steps);
-  if (n_acc > 0) {
-    accel_cmd = state[accelDelayTapIndex(0)];
-  }
-  if (n_steer > 0) {
-    steer_cmd = state[steerDelayTapIndex(0)];
-  }
-}
-
-/** Discrete ZOH shift: drop applied cmd, append newly issued cmd. */
-__host__ __device__ void advanceInputDelayPipes(
-  const FirstOrderDubinsBicycleParams & p, const float * state, float * next_state,
-  const float * control)
-{
-  constexpr int kMax = FirstOrderDubinsBicycleParams::kMaxInputDelaySteps;
-  const int n_acc = clampInputDelaySteps(p.acc_delay_steps);
-  const int n_steer = clampInputDelaySteps(p.steer_delay_steps);
-  const float accel_cmd = control[static_cast<int>(C::ACCELERATION_CMD)];
-  const float steer_cmd = control[static_cast<int>(C::STEER_CMD)];
-
-  // Fixed trip count so the compiler can fully unroll (n_* chosen at runtime).
-#ifdef __CUDA_ARCH__
-#pragma unroll
-#endif
-  for (int i = 0; i < kMax; ++i) {
-    if (i < n_acc - 1) {
-      next_state[accelDelayTapIndex(i)] = state[accelDelayTapIndex(i + 1)];
-    } else if (n_acc > 0 && i == n_acc - 1) {
-      next_state[accelDelayTapIndex(i)] = accel_cmd;
-    } else {
-      next_state[accelDelayTapIndex(i)] = 0.0F;
-    }
-
-    if (i < n_steer - 1) {
-      next_state[steerDelayTapIndex(i)] = state[steerDelayTapIndex(i + 1)];
-    } else if (n_steer > 0 && i == n_steer - 1) {
-      next_state[steerDelayTapIndex(i)] = steer_cmd;
-    } else {
-      next_state[steerDelayTapIndex(i)] = 0.0F;
-    }
-  }
-}
-
 __host__ __device__ void firstOrderDubinsBicycleDeriv(
   const FirstOrderDubinsBicycleParams & p, const float * state, const float * control,
   float * state_der)
@@ -76,9 +15,8 @@ __host__ __device__ void firstOrderDubinsBicycleDeriv(
   const float yaw = state[static_cast<int>(S::YAW)];
   const float steer = state[static_cast<int>(S::STEER_ANGLE)];
   const float accel = state[static_cast<int>(S::ACCELERATION)];
-  float accel_cmd = 0.0F;
-  float steer_cmd = 0.0F;
-  resolveDelayedControl(p, state, control, accel_cmd, steer_cmd);
+  const float accel_cmd = control[static_cast<int>(C::ACCELERATION_CMD)];
+  const float steer_cmd = control[static_cast<int>(C::STEER_CMD)];
 
   const float accel_tau = fmaxf(p.accel_time_constant, 1.0E-4F);
   const float steer_tau = fmaxf(p.steer_time_constant, 1.0E-4F);
@@ -95,15 +33,29 @@ __host__ __device__ void firstOrderDubinsBicycleDeriv(
 
   const float steer_dot = clampSteerRate(p, (steer_cmd - steer) / steer_tau);
   state_der[static_cast<int>(S::STEER_ANGLE)] = steer_dot;
+}
 
-  // Delay taps are discrete; keep continuous ders at zero then overwrite in step().
-#ifdef __CUDA_ARCH__
-#pragma unroll
-#endif
-  for (int i = 0; i < FirstOrderDubinsBicycleParams::kMaxInputDelaySteps; ++i) {
-    state_der[accelDelayTapIndex(i)] = 0.0F;
-    state_der[steerDelayTapIndex(i)] = 0.0F;
-  }
+__host__ __device__ void populateGeometricDerivatives(
+  const FirstOrderDubinsBicycleParams & p, const float * state, const float * next_state,
+  float * output, const float dt)
+{
+  using O = FirstOrderDubinsBicycleParams::OutputIndex;
+  const float safe_dt = fmaxf(dt, 1.0E-4F);
+  const float wheel_base = fmaxf(p.wheel_base, 1.0E-4F);
+  const float velocity = state[static_cast<int>(S::VEL_X)];
+  const float next_velocity = next_state[static_cast<int>(S::VEL_X)];
+  const float steer = state[static_cast<int>(S::STEER_ANGLE)];
+  const float next_steer = next_state[static_cast<int>(S::STEER_ANGLE)];
+  const float lateral_acceleration = velocity * velocity * tanf(steer) / wheel_base;
+  const float next_lateral_acceleration =
+    next_velocity * next_velocity * tanf(next_steer) / wheel_base;
+
+  output[static_cast<int>(O::STEER_RATE)] = (next_steer - steer) / safe_dt;
+  output[static_cast<int>(O::LONGITUDINAL_JERK)] =
+    (next_state[static_cast<int>(S::ACCELERATION)] - state[static_cast<int>(S::ACCELERATION)]) /
+    safe_dt;
+  output[static_cast<int>(O::LATERAL_JERK)] =
+    (next_lateral_acceleration - lateral_acceleration) / safe_dt;
 }
 }  // namespace
 
@@ -164,8 +116,8 @@ void FirstOrderDubinsBicycleImpl<CLASS_T, PARAMS_T>::step(
 {
   this->computeStateDeriv(state, control, state_der);
   this->updateState(state, next_state, state_der, dt);
-  advanceInputDelayPipes(this->params_, state.data(), next_state.data(), control.data());
   this->stateToOutput(next_state, output);
+  populateGeometricDerivatives(this->params_, state.data(), next_state.data(), output.data(), dt);
 }
 
 template <class CLASS_T, class PARAMS_T>
@@ -213,12 +165,12 @@ __device__ void FirstOrderDubinsBicycleImpl<CLASS_T, PARAMS_T>::step(
   __syncthreads();
   this->updateState(state, next_state, state_der, dt);
   __syncthreads();
-  // One writer: delay taps are not partitioned across threadIdx.y.
+  this->stateToOutput(next_state, output);
+  __syncthreads();
   if (threadIdx.y == 0) {
-    advanceInputDelayPipes(this->params_, state, next_state, control);
+    populateGeometricDerivatives(this->params_, state, next_state, output, dt);
   }
   __syncthreads();
-  this->stateToOutput(next_state, output);
 }
 
 template <class CLASS_T, class PARAMS_T>
@@ -286,6 +238,7 @@ __host__ __device__ void FirstOrderDubinsBicycleImpl<CLASS_T, PARAMS_T>::stateTo
   output[static_cast<int>(O::STEER_ANGLE)] = state[static_cast<int>(S::STEER_ANGLE)];
   output[static_cast<int>(O::ACCELERATION)] = state[static_cast<int>(S::ACCELERATION)];
   output[static_cast<int>(O::TOTAL_VELOCITY)] = fabsf(v);
+  output[static_cast<int>(O::STEER_RATE)] = 0.0F;
   output[static_cast<int>(O::LONGITUDINAL_JERK)] = 0.0F;
   output[static_cast<int>(O::LATERAL_JERK)] = 0.0F;
 }

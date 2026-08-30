@@ -21,8 +21,8 @@
 
 #include <algorithm>
 #include <cmath>
-#include <deque>
 #include <limits>
+#include <stdexcept>
 #include <vector>
 
 namespace autoware::mppi_optimizer::detail
@@ -82,17 +82,51 @@ InitialState makeInitialState(
   const std::optional<autoware_vehicle_msgs::msg::SteeringReport> & steering_status,
   const FirstOrderDubinsMppiVehicleParams & vehicle_params)
 {
+  if (!acceleration) {
+    throw std::invalid_argument("MPPI acceleration input is missing");
+  }
+  if (!steering_status) {
+    throw std::invalid_argument("MPPI steering input is missing");
+  }
+
+  const auto & position = odometry.pose.pose.position;
+  const auto & orientation = odometry.pose.pose.orientation;
+  const auto & linear_velocity = odometry.twist.twist.linear;
+  const auto & angular_velocity = odometry.twist.twist.angular;
+  const double orientation_norm_sq = orientation.x * orientation.x + orientation.y * orientation.y +
+                                     orientation.z * orientation.z + orientation.w * orientation.w;
+  if (
+    !std::isfinite(position.x) || !std::isfinite(position.y) || !std::isfinite(position.z) ||
+    !std::isfinite(orientation.x) || !std::isfinite(orientation.y) ||
+    !std::isfinite(orientation.z) || !std::isfinite(orientation.w) ||
+    !std::isfinite(orientation_norm_sq) || orientation_norm_sq <= 1.0E-12 ||
+    !std::isfinite(linear_velocity.x) || !std::isfinite(linear_velocity.y) ||
+    !std::isfinite(linear_velocity.z) || !std::isfinite(angular_velocity.x) ||
+    !std::isfinite(angular_velocity.y) || !std::isfinite(angular_velocity.z)) {
+    throw std::invalid_argument("MPPI odometry input must contain finite values and a valid pose");
+  }
+
+  const auto & linear_acceleration = acceleration->accel.accel.linear;
+  const auto & angular_acceleration = acceleration->accel.accel.angular;
+  if (
+    !std::isfinite(linear_acceleration.x) || !std::isfinite(linear_acceleration.y) ||
+    !std::isfinite(linear_acceleration.z) || !std::isfinite(angular_acceleration.x) ||
+    !std::isfinite(angular_acceleration.y) || !std::isfinite(angular_acceleration.z)) {
+    throw std::invalid_argument("MPPI acceleration input must contain finite values");
+  }
+  if (!std::isfinite(steering_status->steering_tire_angle)) {
+    throw std::invalid_argument("MPPI steering input must contain a finite tire angle");
+  }
+
   InitialState state;
   state.x = static_cast<float>(odometry.pose.pose.position.x);
   state.y = static_cast<float>(odometry.pose.pose.position.y);
   state.yaw = static_cast<float>(tf2::getYaw(odometry.pose.pose.orientation));
   state.velocity = static_cast<float>(odometry.twist.twist.linear.x);
-  const float acceleration_value =
-    acceleration.has_value() ? static_cast<float>(acceleration->accel.accel.linear.x) : 0.0F;
+  const float acceleration_value = static_cast<float>(linear_acceleration.x);
   state.acceleration =
     std::clamp(acceleration_value, vehicle_params.min_accel(), vehicle_params.max_accel());
-  const float steering_value =
-    steering_status.has_value() ? steering_status->steering_tire_angle : 0.0F;
+  const float steering_value = steering_status->steering_tire_angle;
   state.steering =
     std::clamp(steering_value, -vehicle_params.max_steer_angle, vehicle_params.max_steer_angle);
   return state;
@@ -199,8 +233,7 @@ std::optional<float> getUniformMaximumVelocity(
 ActiveVelocityLimitProfile buildActiveVelocityLimitProfile(
   const std::vector<FirstOrderDubinsMppiControl> & controls, const InitialState & initial_state,
   const FirstOrderDubinsMppiKinematicLimits & limits,
-  const FirstOrderDubinsMppiVehicleParams & vehicle_params, const int acceleration_delay_steps,
-  const std::vector<float> & acceleration_delay_buffer, const float dt, const bool keep_active,
+  const FirstOrderDubinsMppiVehicleParams & vehicle_params, const float dt, const bool keep_active,
   const std::vector<float> & reference_velocities)
 {
   ActiveVelocityLimitProfile profile;
@@ -336,17 +369,6 @@ ActiveVelocityLimitProfile buildActiveVelocityLimitProfile(
     return velocity_loss;
   };
 
-  std::deque<float> pending_commands;
-  const int delay_steps = std::max(0, acceleration_delay_steps);
-  for (int step = 0; step < delay_steps; ++step) {
-    const float fallback = initial_state.acceleration;
-    const float command = static_cast<std::size_t>(step) < acceleration_delay_buffer.size()
-                            ? acceleration_delay_buffer[static_cast<std::size_t>(step)]
-                            : fallback;
-    pending_commands.push_back(
-      std::clamp(command, vehicle_params.min_accel(), vehicle_params.max_accel()));
-  }
-
   profile.active = true;
   if (uniform_maximum_velocity) {
     profile.target_velocity = *uniform_maximum_velocity;
@@ -365,15 +387,11 @@ ActiveVelocityLimitProfile buildActiveVelocityLimitProfile(
     std::clamp(initial_state.acceleration, vehicle_params.min_accel(), vehicle_params.max_accel());
 
   for (std::size_t index = 0; index < profile.controls.size(); ++index) {
-    // Select the command for its delayed application state, not the current issue-time state.
     float application_velocity = velocity;
     float application_acceleration = acceleration;
-    for (const float pending_command : pending_commands) {
-      advance_plant(pending_command, application_velocity, application_acceleration);
-    }
 
     const std::size_t application_index =
-      std::min(index + pending_commands.size(), admissible_maximum_velocities.size() - 1U);
+      std::min(index, admissible_maximum_velocities.size() - 1U);
     const auto target_velocity = uniform_maximum_velocity
                                    ? uniform_maximum_velocity
                                    : admissible_maximum_velocities[application_index];
@@ -409,13 +427,7 @@ ActiveVelocityLimitProfile buildActiveVelocityLimitProfile(
     }
     profile.controls[index].accel_cmd = command;
 
-    float applied_command = command;
-    if (!pending_commands.empty()) {
-      applied_command = pending_commands.front();
-      pending_commands.pop_front();
-      pending_commands.push_back(command);
-    }
-    advance_plant(applied_command, velocity, acceleration);
+    advance_plant(command, velocity, acceleration);
     profile.velocities.push_back(velocity);
     profile.accelerations.push_back(acceleration);
   }
@@ -531,16 +543,20 @@ std::vector<FirstOrderDubinsMppiControl> buildForcedNominalControl(
   const FirstOrderDubinsMppiVehicleParams & vehicle_params, const int horizon)
 {
   const int control_count = std::max(0, horizon);
+  if (control_count > 0 && (acceleration_commands.empty() || steering_commands.empty())) {
+    throw std::invalid_argument(
+      "Forced MPPI nominal input requires both acceleration and steering commands");
+  }
   std::vector<FirstOrderDubinsMppiControl> nominal(static_cast<std::size_t>(control_count));
   for (int t = 0; t < control_count; ++t) {
     const auto index = static_cast<std::size_t>(t);
-    const float acceleration =
-      index < acceleration_commands.size()
-        ? acceleration_commands[index]
-        : (acceleration_commands.empty() ? 0.0F : acceleration_commands.back());
-    const float steering = index < steering_commands.size()
-                             ? steering_commands[index]
-                             : (steering_commands.empty() ? 0.0F : steering_commands.back());
+    const float acceleration = index < acceleration_commands.size() ? acceleration_commands[index]
+                                                                    : acceleration_commands.back();
+    const float steering =
+      index < steering_commands.size() ? steering_commands[index] : steering_commands.back();
+    if (!std::isfinite(acceleration) || !std::isfinite(steering)) {
+      throw std::invalid_argument("Forced MPPI nominal commands must be finite");
+    }
     nominal[index].accel_cmd =
       std::clamp(acceleration, vehicle_params.min_accel(), vehicle_params.max_accel());
     nominal[index].steer_cmd =
@@ -552,8 +568,7 @@ std::vector<FirstOrderDubinsMppiControl> buildForcedNominalControl(
 std::vector<FirstOrderDubinsMppiControl> filterNominalControlWithKinematicLimits(
   const std::vector<FirstOrderDubinsMppiControl> & nominal, const InitialState & initial_state,
   const FirstOrderDubinsMppiKinematicLimits & limits,
-  const FirstOrderDubinsMppiVehicleParams & vehicle_params, const int acceleration_delay_steps,
-  const std::vector<float> & acceleration_delay_buffer, const float dt)
+  const FirstOrderDubinsMppiVehicleParams & vehicle_params, const float dt)
 {
   auto maximum_velocities = buildEffectiveMaximumVelocityProfile(nominal.size(), limits);
   const auto uniform_maximum_velocity = getUniformMaximumVelocity(maximum_velocities);
@@ -611,17 +626,6 @@ std::vector<FirstOrderDubinsMppiControl> filterNominalControlWithKinematicLimits
     }
   }
 
-  const int delay_steps = std::max(0, acceleration_delay_steps);
-  std::deque<float> pending_commands;
-  for (int i = 0; i < delay_steps; ++i) {
-    const float fallback = initial_state.acceleration;
-    const float command = static_cast<std::size_t>(i) < acceleration_delay_buffer.size()
-                            ? acceleration_delay_buffer[static_cast<std::size_t>(i)]
-                            : fallback;
-    pending_commands.push_back(
-      std::clamp(command, vehicle_params.min_accel(), vehicle_params.max_accel()));
-  }
-
   auto filtered = nominal;
   float velocity = initial_state.velocity;
   float acceleration =
@@ -637,18 +641,13 @@ std::vector<FirstOrderDubinsMppiControl> filterNominalControlWithKinematicLimits
     };
 
   for (std::size_t i = 0; i < filtered.size(); ++i) {
-    // Predict the state at which the command issued now will reach the plant.
     float application_velocity = velocity;
     float application_acceleration = acceleration;
-    for (const float pending_command : pending_commands) {
-      advance_plant(pending_command, application_velocity, application_acceleration);
-    }
 
     float command = std::clamp(nominal[i].accel_cmd, minimum_acceleration, maximum_acceleration);
     const float next_application_velocity =
       application_velocity + application_acceleration * safe_dt;
-    const std::size_t application_index =
-      std::min(i + pending_commands.size(), maximum_velocities.size() - 1U);
+    const std::size_t application_index = std::min(i, maximum_velocities.size() - 1U);
     const auto maximum_velocity =
       uniform_maximum_velocity ? uniform_maximum_velocity : maximum_velocities[application_index];
     if (maximum_velocity && next_application_velocity > *maximum_velocity) {
@@ -662,21 +661,14 @@ std::vector<FirstOrderDubinsMppiControl> filterNominalControlWithKinematicLimits
       command = std::max(command, recovery_command);
     }
 
-    // Jerk is da/dt=(u_applied-a)/tau in the rollout model. Limit the command using the
-    // acceleration predicted at its application time, not the state at its issue time.
+    // Jerk is da/dt=(u-a)/tau in the zero-delay rollout model.
     command = std::clamp(
       command, application_acceleration + minimum_jerk * acceleration_time_constant,
       application_acceleration + maximum_jerk * acceleration_time_constant);
     command = std::clamp(command, minimum_acceleration, maximum_acceleration);
     filtered[i].accel_cmd = command;
 
-    float applied_command = command;
-    if (!pending_commands.empty()) {
-      applied_command = pending_commands.front();
-      pending_commands.pop_front();
-      pending_commands.push_back(command);
-    }
-    advance_plant(applied_command, velocity, acceleration);
+    advance_plant(command, velocity, acceleration);
   }
   return filtered;
 }
@@ -701,8 +693,9 @@ Trajectory buildOptimizedTrajectory(
   const std::vector<FirstOrderDubinsMppiControl> & controls)
 {
   Trajectory output = input;
-  const std::size_t optimized_count =
-    std::min({output.points.size(), post_step_states.size(), controls.size()});
+  (void)controls;
+  const std::size_t optimized_count = std::min(output.points.size(), post_step_states.size());
+  output.points.resize(optimized_count);
   for (std::size_t i = 0; i < optimized_count; ++i) {
     const auto & state = post_step_states[i];
     const auto & input_point = input.points[i];
@@ -712,11 +705,10 @@ Trajectory buildOptimizedTrajectory(
     output_point.pose.position.z = input_point.pose.position.z;
     output_point.pose.orientation = quaternionFromYaw(state.yaw);
     output_point.longitudinal_velocity_mps = state.velocity;
-    // Plant longitudinal accel / tire angle (lag states), not undelayed cmds.
-    // output_point.acceleration_mps2 = state.acceleration;
-    // output_point.front_wheel_angle_rad = state.steering;
-    output_point.acceleration_mps2 = controls[i].accel_cmd;
-    output_point.front_wheel_angle_rad = controls[i].steer_cmd;
+    // The public trajectory contains geometric plant states. These fields never expose the
+    // undelayed MPPI feedforward commands.
+    output_point.acceleration_mps2 = state.acceleration;
+    output_point.front_wheel_angle_rad = state.steering;
   }
   return output;
 }

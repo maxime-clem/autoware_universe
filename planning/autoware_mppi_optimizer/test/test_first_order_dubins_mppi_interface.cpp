@@ -495,21 +495,20 @@ TEST_F(FirstOrderDubinsMppiInterfaceGpuTest, RejectedActiveLimitRetainsLongitudi
   EXPECT_TRUE(result.debug.optimized_trajectory == result.trajectory);
 }
 
-TEST_F(FirstOrderDubinsMppiInterfaceGpuTest, AppliesPerChannelActuatorDelayWithoutRefShift)
+TEST_F(FirstOrderDubinsMppiInterfaceGpuTest, IgnoresLegacyActuatorDelayParameters)
 {
   FirstOrderDubinsMppiVehicleParams vehicle_params;
-  vehicle_params.acc_time_delay = 0.10F;    // N_acc = ceil(0.10/0.1) = 1 at t=0.
-  vehicle_params.steer_time_delay = 0.24F;  // N_steer = ceil(0.24/0.1) = 3 at t=0.
+  vehicle_params.acc_time_delay = 10.0F;
+  vehicle_params.steer_time_delay = 10.0F;
   interface_->setVehicleParams(vehicle_params);
 
   const auto input = makeStraightTrajectory(85U);
   const auto result = optimize(*interface_, input);
 
   ASSERT_TRUE(interface_->isInitialized());
-  ASSERT_EQ(result.trajectory.points.size(), input.points.size());
+  ASSERT_EQ(result.trajectory.points.size(), static_cast<std::size_t>(detail::kMppiHorizon));
 
-  // Delay is applied in dynamics from the measured ego IC (no host pre-roll / ref shift),
-  // so the first published post-step state stays near the undelayed one-step motion.
+  // The legacy delay fields have no effect. The first step uses the measured plant state.
   const auto & first = result.trajectory.points.front();
   EXPECT_NEAR(first.pose.position.x, 0.2, 1.0E-5);
   EXPECT_NEAR(first.pose.position.y, 0.0, 1.0E-5);

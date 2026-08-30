@@ -99,7 +99,7 @@ void printUsage(const char * argv0)
                "\n"
                "Exact online parity: loads cost/vehicle/runtime params plus per-frame\n"
                "*_ego.csv, *_nominal.csv (REQUIRED warm-start u_nom), *_road_borders.csv,\n"
-               "*_drivable.csv, *_objects.csv, *_control_history.csv, *_delay_buffer.csv.\n"
+               "*_drivable.csv, *_objects.csv, *_control_history.csv.\n"
                "Also restores per-frame *_kinematic_limits.csv when present.\n"
                "CLI --set and vehicle flags override logged values.\n"
                "After each frame, writes <out-dir>/<tag>_seed_nominal.csv from optimized u_opt\n"
@@ -310,7 +310,6 @@ FirstOrderDubinsMppiRuntimeOptions loadRuntimeOptionsFromLog(const std::string &
   options.skip_if_invalid = true;
   options.use_last_control_as_nominal = true;
   options.prevent_reverse_velocity = true;
-  options.enable_input_delay_compensation = true;
   if (loadMppiDebugRuntimeOptionsCsv(log_dir + "/runtime_options.csv", options)) {
     std::cerr << "Loaded runtime options from " << log_dir << "/runtime_options.csv\n";
   } else {
@@ -652,24 +651,6 @@ int run(int argc, char ** argv)
       std::cout << "frame " << frame_id
                 << " reseeding u_nom from reference with nominal curvature chord "
                 << cost_params.nominal_curvature_min_chord_length_m << " m\n";
-    }
-
-    {
-      const std::string delay_path = log_dir + "/" + tag + "_delay_buffer.csv";
-      std::vector<float> delay_accel;
-      std::vector<float> delay_steer;
-      if (std::filesystem::exists(delay_path)) {
-        if (loadMppiDebugNominalCsv(delay_path, delay_accel, delay_steer) && !delay_accel.empty()) {
-          frame_mppi.setInputDelayBuffer(delay_accel, delay_steer);
-        }
-      } else {
-        static bool warned_missing_delay = false;
-        if (!warned_missing_delay) {
-          std::cerr << "WARNING: missing *_delay_buffer.csv; delay FIFO seeds from measured "
-                       "accel/steer (re-log for exact online match).\n";
-          warned_missing_delay = true;
-        }
-      }
     }
 
     std::vector<Segment> road_borders;

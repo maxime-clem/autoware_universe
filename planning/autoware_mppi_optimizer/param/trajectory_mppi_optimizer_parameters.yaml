@@ -132,6 +132,12 @@ trajectory_mppi_optimizer:
     description: Steering rate cost coefficient
     validation: { gt_eq<>: [0.0] }
     read_only: false
+  overlimit_coeff:
+    type: double
+    default_value: 10000.0
+    description: Kinematic limit violation cost coefficient
+    validation: { gt_eq<>: [0.0] }
+    read_only: false
   accel_cmd_std_dev:
     type: double
     default_value: 0.1
@@ -215,11 +221,6 @@ trajectory_mppi_optimizer:
     default_value: 1.5
     description: Minimum chord length for nominal curvature
     validation: { gt<>: [0.0] }
-    read_only: false
-  enable_input_delay_compensation:
-    type: bool
-    default_value: true
-    description: Enable actuator input delay compensation
     read_only: false
   prevent_reverse_velocity:
     type: bool

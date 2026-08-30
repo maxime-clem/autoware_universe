@@ -25,6 +25,7 @@
 #include <cstddef>
 #include <iterator>
 #include <optional>
+#include <stdexcept>
 #include <vector>
 
 namespace autoware::mppi_optimizer::detail
@@ -86,7 +87,7 @@ TEST(TrajectoryEligibility, SkipsOnlyTrajectoriesThatAreBothShortAndStopping)
   EXPECT_TRUE(isOptimizationRequired(short_stopping, 2.0));
 }
 
-TEST(InitialState, UsesOdometryDefaultsAndClampsOptionalVehicleState)
+TEST(InitialState, RejectsMissingVehicleStateAndClampsPresentInputs)
 {
   Odometry odometry;
   odometry.pose.pose.position.x = 12.0;
@@ -98,19 +99,18 @@ TEST(InitialState, UsesOdometryDefaultsAndClampsOptionalVehicleState)
   vehicle.vel_rate_lim = 3.0F;
   vehicle.max_steer_angle = 0.4F;
 
-  const auto defaults = makeInitialState(odometry, std::nullopt, std::nullopt, vehicle);
-  EXPECT_FLOAT_EQ(defaults.x, 12.0F);
-  EXPECT_FLOAT_EQ(defaults.y, -4.0F);
-  EXPECT_NEAR(defaults.yaw, 0.7F, 1.0E-6F);
-  EXPECT_FLOAT_EQ(defaults.velocity, -2.5F);
-  EXPECT_FLOAT_EQ(defaults.acceleration, 0.0F);
-  EXPECT_FLOAT_EQ(defaults.steering, 0.0F);
+  EXPECT_THROW(
+    (void)makeInitialState(odometry, std::nullopt, std::nullopt, vehicle), std::invalid_argument);
 
   geometry_msgs::msg::AccelWithCovarianceStamped acceleration;
   acceleration.accel.accel.linear.x = 10.0;
   autoware_vehicle_msgs::msg::SteeringReport steering;
   steering.steering_tire_angle = -1.0F;
   const auto clamped = makeInitialState(odometry, acceleration, steering, vehicle);
+  EXPECT_FLOAT_EQ(clamped.x, 12.0F);
+  EXPECT_FLOAT_EQ(clamped.y, -4.0F);
+  EXPECT_NEAR(clamped.yaw, 0.7F, 1.0E-6F);
+  EXPECT_FLOAT_EQ(clamped.velocity, -2.5F);
   EXPECT_FLOAT_EQ(clamped.acceleration, vehicle.max_accel());
   EXPECT_FLOAT_EQ(clamped.steering, -vehicle.max_steer_angle);
 }
@@ -237,7 +237,7 @@ TEST(ActiveVelocityLimitProfile, InactivePathPreservesControlsAndTrajectoryExact
   EXPECT_TRUE(trajectory == original);
 }
 
-TEST(ActiveVelocityLimitProfile, BuildsDelayAndJerkAwareFastStop)
+TEST(ActiveVelocityLimitProfile, BuildsZeroDelayJerkAwareFastStop)
 {
   std::vector<FirstOrderDubinsMppiControl> controls(40U, {0.7F, 0.1F});
   InitialState ego;
@@ -253,8 +253,7 @@ TEST(ActiveVelocityLimitProfile, BuildsDelayAndJerkAwareFastStop)
   limits.min_longitudinal_jerk = -10.0F;
   limits.max_longitudinal_jerk = 10.0F;
 
-  const auto profile =
-    buildActiveVelocityLimitProfile(controls, ego, limits, vehicle, 1, {0.0F}, 0.1F);
+  const auto profile = buildActiveVelocityLimitProfile(controls, ego, limits, vehicle, 0.1F);
 
   ASSERT_TRUE(profile.active);
   ASSERT_EQ(profile.controls.size(), controls.size());
@@ -264,10 +263,10 @@ TEST(ActiveVelocityLimitProfile, BuildsDelayAndJerkAwareFastStop)
   EXPECT_FLOAT_EQ(profile.controls[1].accel_cmd, -2.0F);
   EXPECT_FLOAT_EQ(profile.controls[2].accel_cmd, -2.0F);
   EXPECT_FLOAT_EQ(profile.velocities[0], 4.0F);
-  EXPECT_FLOAT_EQ(profile.velocities[1], 4.0F);
-  EXPECT_FLOAT_EQ(profile.velocities[2], 3.9F);
-  EXPECT_FLOAT_EQ(profile.accelerations[0], 0.0F);
-  EXPECT_FLOAT_EQ(profile.accelerations[1], -1.0F);
+  EXPECT_FLOAT_EQ(profile.velocities[1], 3.9F);
+  EXPECT_FLOAT_EQ(profile.velocities[2], 3.7F);
+  EXPECT_FLOAT_EQ(profile.accelerations[0], -1.0F);
+  EXPECT_FLOAT_EQ(profile.accelerations[1], -2.0F);
   EXPECT_FLOAT_EQ(profile.accelerations[2], -2.0F);
   EXPECT_LE(profile.velocities.back(), 0.05F);
   for (std::size_t index = 0; index < controls.size(); ++index) {
@@ -354,7 +353,7 @@ TEST(ActiveVelocityLimitProfile, AcceleratesTowardReferenceAfterPointwiseLimitIn
   limits.max_longitudinal_jerk = 10.0F;
 
   const auto profile = buildActiveVelocityLimitProfile(
-    controls, ego, limits, vehicle, 0, {}, 0.1F, false, reference_velocities);
+    controls, ego, limits, vehicle, 0.1F, false, reference_velocities);
 
   ASSERT_TRUE(profile.active);
   EXPECT_TRUE(
@@ -381,7 +380,7 @@ TEST(ActiveVelocityLimitProfile, UsesLookaheadProportionalAccelerationNearRefere
   limits.max_longitudinal_jerk = 10.0F;
 
   const auto profile = buildActiveVelocityLimitProfile(
-    controls, ego, limits, vehicle, 0, {}, 0.1F, true, reference_velocities);
+    controls, ego, limits, vehicle, 0.1F, true, reference_velocities);
 
   ASSERT_TRUE(profile.active);
   ASSERT_EQ(profile.controls.size(), controls.size());
@@ -401,12 +400,11 @@ TEST(ActiveVelocityLimitProfile, RetainsOnlyAnExplicitlyActiveUnchangedLimit)
   const auto newly_nonrestrictive = buildActiveVelocityLimitProfile(controls, ego, limits, vehicle);
   EXPECT_FALSE(newly_nonrestrictive.active);
 
-  const auto retained =
-    buildActiveVelocityLimitProfile(controls, ego, limits, vehicle, 0, {}, 0.1F, true);
+  const auto retained = buildActiveVelocityLimitProfile(controls, ego, limits, vehicle, 0.1F, true);
   EXPECT_TRUE(retained.active);
 
   const auto cleared = buildActiveVelocityLimitProfile(
-    controls, ego, FirstOrderDubinsMppiKinematicLimits{}, vehicle, 0, {}, 0.1F, true);
+    controls, ego, FirstOrderDubinsMppiKinematicLimits{}, vehicle, 0.1F, true);
   EXPECT_FALSE(cleared.active);
   ASSERT_EQ(cleared.controls.size(), controls.size());
   for (std::size_t index = 0; index < controls.size(); ++index) {
@@ -590,7 +588,7 @@ TEST(NominalControlFilter, LeavesNominalExactlyUnchangedWithoutExternalLimits)
   FirstOrderDubinsMppiVehicleParams vehicle;
 
   const auto filtered = filterNominalControlWithKinematicLimits(
-    nominal, ego, FirstOrderDubinsMppiKinematicLimits{}, vehicle, 1, {2.0F});
+    nominal, ego, FirstOrderDubinsMppiKinematicLimits{}, vehicle);
 
   ASSERT_EQ(filtered.size(), nominal.size());
   for (std::size_t i = 0; i < nominal.size(); ++i) {
@@ -615,7 +613,7 @@ TEST(NominalControlFilter, ClampsAccelerationAndAppliesJerkAtCommandApplicationT
   limits.max_longitudinal_jerk = 4.0F;
 
   const auto filtered =
-    filterNominalControlWithKinematicLimits(nominal, ego, limits, vehicle, 0, {}, 0.1F);
+    filterNominalControlWithKinematicLimits(nominal, ego, limits, vehicle, 0.1F);
 
   ASSERT_EQ(filtered.size(), nominal.size());
   EXPECT_FLOAT_EQ(filtered[0].accel_cmd, -1.0F);
@@ -624,7 +622,7 @@ TEST(NominalControlFilter, ClampsAccelerationAndAppliesJerkAtCommandApplicationT
   EXPECT_FLOAT_EQ(filtered[1].steer_cmd, nominal[1].steer_cmd);
 }
 
-TEST(NominalControlFilter, ZeroVelocityLimitSeedsStrongestDelayAwareBraking)
+TEST(NominalControlFilter, ZeroVelocityLimitSeedsStrongestZeroDelayBraking)
 {
   const std::vector<FirstOrderDubinsMppiControl> nominal(4U, {0.0F, 0.1F});
   InitialState ego;
@@ -641,7 +639,7 @@ TEST(NominalControlFilter, ZeroVelocityLimitSeedsStrongestDelayAwareBraking)
   limits.max_longitudinal_jerk = 10.0F;
 
   const auto filtered =
-    filterNominalControlWithKinematicLimits(nominal, ego, limits, vehicle, 1, {0.0F}, 0.1F);
+    filterNominalControlWithKinematicLimits(nominal, ego, limits, vehicle, 0.1F);
 
   ASSERT_EQ(filtered.size(), nominal.size());
   EXPECT_FLOAT_EQ(filtered[0].accel_cmd, -1.0F);
@@ -666,7 +664,7 @@ TEST(NominalControlFilter, UsesLookaheadProportionalBrakingNearVelocityLimit)
   limits.max_longitudinal_jerk = 10.0F;
 
   const auto filtered =
-    filterNominalControlWithKinematicLimits(nominal, ego, limits, vehicle, 0, {}, 0.1F);
+    filterNominalControlWithKinematicLimits(nominal, ego, limits, vehicle, 0.1F);
 
   ASSERT_EQ(filtered.size(), nominal.size());
   EXPECT_NEAR(filtered[0].accel_cmd, -0.2F, 1.0E-5F);
@@ -689,7 +687,7 @@ TEST(NominalControlFilter, DoesNotImposeMinimumVelocityWithoutVelocityLimit)
   EXPECT_FLOAT_EQ(filtered[0].accel_cmd, nominal[0].accel_cmd);
 }
 
-TEST(OutputConversion, OverwritesOnlyAvailablePostStepSamples)
+TEST(OutputConversion, EmitsOnlyAvailablePostStepPlantStates)
 {
   const auto input = makeTrajectory(3U, 1.0, 2.0F);
   const std::vector<OptimizedState> states = {
@@ -697,17 +695,16 @@ TEST(OutputConversion, OverwritesOnlyAvailablePostStepSamples)
   const std::vector<FirstOrderDubinsMppiControl> controls = {{0.5F, -0.1F}, {0.6F, -0.2F}};
 
   const auto output = buildOptimizedTrajectory(input, states, controls);
-  ASSERT_EQ(output.points.size(), input.points.size());
+  ASSERT_EQ(output.points.size(), states.size());
   EXPECT_EQ(output.header, input.header);
   EXPECT_DOUBLE_EQ(output.points[0].pose.position.x, 10.0);
   EXPECT_DOUBLE_EQ(output.points[0].pose.position.y, 20.0);
   EXPECT_DOUBLE_EQ(output.points[0].pose.position.z, input.points[0].pose.position.z);
   EXPECT_NEAR(tf2::getYaw(output.points[0].pose.orientation), 0.3, 1.0E-6);
   EXPECT_FLOAT_EQ(output.points[0].longitudinal_velocity_mps, 4.0F);
-  EXPECT_FLOAT_EQ(output.points[0].acceleration_mps2, controls[0].accel_cmd);
-  EXPECT_FLOAT_EQ(output.points[0].front_wheel_angle_rad, controls[0].steer_cmd);
+  EXPECT_FLOAT_EQ(output.points[0].acceleration_mps2, states[0].acceleration);
+  EXPECT_FLOAT_EQ(output.points[0].front_wheel_angle_rad, states[0].steering);
   EXPECT_FLOAT_EQ(output.points[0].lateral_velocity_mps, input.points[0].lateral_velocity_mps);
-  EXPECT_TRUE(output.points[2] == input.points[2]);
 }
 
 TEST(EngageVelocity, ChangesAllLeadingStoppedPointsWhenMovementIsRequested)

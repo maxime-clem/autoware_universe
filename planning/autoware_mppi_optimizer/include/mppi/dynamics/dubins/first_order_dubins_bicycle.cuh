@@ -1,13 +1,12 @@
 /**
  * Kinematic Dubins bicycle with first-order actuation on longitudinal acceleration and steering.
  *
- * State: speed, yaw, position, steer angle, applied acceleration, plus optional discrete
- * ZOH command-delay pipelines (oldest tap = next applied) for accel/steer independently.
+ * State: speed, yaw, position, steer angle, and applied longitudinal acceleration.
  * Controls: acceleration command [m/s^2], steer angle command [rad].
  *
- *   d(accel)/dt = (u_accel_delayed - accel) / accel_time_constant
+ *   d(accel)/dt = (u_accel - accel) / accel_time_constant
  *   d(v)/dt     = accel
- *   d(steer)/dt = (u_steer_delayed - steer) / steer_time_constant   (rate-limited)
+ *   d(steer)/dt = (u_steer - steer) / steer_time_constant   (rate-limited)
  *   d(yaw)/dt   = (v / L) * tan(steer)
  *   d(x,y)/dt   = v * [cos(yaw), sin(yaw)]
  */
@@ -23,8 +22,6 @@
 
 struct FirstOrderDubinsBicycleParams : public DynamicsParams
 {
-  /** Max discrete dead-time taps per channel (covers τ up to ~0.8 s at dt=0.1). */
-  static constexpr int kMaxInputDelaySteps = 8;
   /** Fixed MPPI integration period used by the reverse-velocity control constraint. */
   static constexpr float kControlDt = 0.1F;
 
@@ -35,23 +32,6 @@ struct FirstOrderDubinsBicycleParams : public DynamicsParams
     POS_Y,
     STEER_ANGLE,
     ACCELERATION,
-    /** Oldest accel cmd in the wire (applied this step when acc_delay_steps > 0). */
-    ACCEL_CMD_D0,
-    ACCEL_CMD_D1,
-    ACCEL_CMD_D2,
-    ACCEL_CMD_D3,
-    ACCEL_CMD_D4,
-    ACCEL_CMD_D5,
-    ACCEL_CMD_D6,
-    ACCEL_CMD_D7,
-    STEER_CMD_D0,
-    STEER_CMD_D1,
-    STEER_CMD_D2,
-    STEER_CMD_D3,
-    STEER_CMD_D4,
-    STEER_CMD_D5,
-    STEER_CMD_D6,
-    STEER_CMD_D7,
     NUM_STATES
   };
 
@@ -66,6 +46,7 @@ struct FirstOrderDubinsBicycleParams : public DynamicsParams
     STEER_ANGLE,
     ACCELERATION,
     TOTAL_VELOCITY,
+    STEER_RATE,
     LATERAL_JERK,
     LONGITUDINAL_JERK,
     NUM_OUTPUTS
@@ -86,37 +67,13 @@ struct FirstOrderDubinsBicycleParams : public DynamicsParams
   float max_accel = 4.0F;
   /** Prevent acceleration commands and integrated states from producing reverse velocity. */
   bool prevent_reverse_velocity = true;
-  /** Discrete ZOH delay steps (0 = no delay). Clamped to [0, kMaxInputDelaySteps]. */
-  int acc_delay_steps = 0;
-  int steer_delay_steps = 0;
 };
-
-static_assert(
-  static_cast<int>(FirstOrderDubinsBicycleParams::StateIndex::ACCEL_CMD_D7) -
-      static_cast<int>(FirstOrderDubinsBicycleParams::StateIndex::ACCEL_CMD_D0) + 1 ==
-    FirstOrderDubinsBicycleParams::kMaxInputDelaySteps,
-  "accel delay taps must match kMaxInputDelaySteps");
-static_assert(
-  static_cast<int>(FirstOrderDubinsBicycleParams::StateIndex::STEER_CMD_D7) -
-      static_cast<int>(FirstOrderDubinsBicycleParams::StateIndex::STEER_CMD_D0) + 1 ==
-    FirstOrderDubinsBicycleParams::kMaxInputDelaySteps,
-  "steer delay taps must match kMaxInputDelaySteps");
 
 /** Apply the steering-rate limit shared by the dynamics and comfort-cost models. */
 template <class PARAMS_T>
 __host__ __device__ inline float clampSteerRate(const PARAMS_T & params, const float steer_rate)
 {
   return fmaxf(fminf(steer_rate, params.max_steer_rate), -params.max_steer_rate);
-}
-
-/** Clamp delay step count into the fixed pipeline capacity. */
-__host__ __device__ inline int clampInputDelaySteps(const int steps)
-{
-  const int max_steps = FirstOrderDubinsBicycleParams::kMaxInputDelaySteps;
-  if (steps <= 0) {
-    return 0;
-  }
-  return steps > max_steps ? max_steps : steps;
 }
 
 using namespace MPPI_internal;
@@ -151,13 +108,13 @@ public:
 
   __device__ void updateState(float * state, float * next_state, float * state_der, const float dt);
 
-  /** Host step: continuous plant with discrete per-channel command delay taps. */
+  /** Host step with commands applied directly to the zero-delay first-order plant. */
   void step(
     Eigen::Ref<state_array> state, Eigen::Ref<state_array> next_state,
     Eigen::Ref<state_array> state_der, const Eigen::Ref<const control_array> & control,
     Eigen::Ref<output_array> output, const float t, const float dt);
 
-  /** Device step: same discrete delay advance as host (rollout kernel entry). */
+  /** Device step with the same zero-delay propagation as the host. */
   __device__ void step(
     float * state, float * next_state, float * state_der, float * control, float * output,
     float * theta_s, const float t, const float dt);
