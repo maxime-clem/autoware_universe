@@ -115,6 +115,7 @@ private:
 
   std::optional<geometry_msgs::msg::AccelWithCovarianceStamped> last_valid_acceleration_;
   std::optional<autoware_vehicle_msgs::msg::SteeringReport> last_valid_steering_;
+  std::optional<Trajectory> previous_optimized_trajectory_;
 
   rclcpp::Publisher<Trajectory>::SharedPtr reference_trajectory_pub_;
   rclcpp::Publisher<Trajectory>::SharedPtr nominal_control_trajectory_pub_;

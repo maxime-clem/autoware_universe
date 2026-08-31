@@ -83,6 +83,16 @@ struct ActiveVelocityLimitProfile
 void setInitialEngageVelocity(
   Trajectory & trajectory, const std::optional<float> & max_velocity = std::nullopt);
 
+/**
+ * Blend a new trajectory with spatially matched points from the previous output.
+ *
+ * Points without an old point inside max_dist_threshold remain exactly as supplied by new_traj.
+ * The returned trajectory always keeps the header and all unspecified fields from new_traj.
+ */
+[[nodiscard]] Trajectory blendTrajectories(
+  const Trajectory & new_traj, const Trajectory & old_traj, double alpha,
+  double max_dist_threshold);
+
 [[nodiscard]] InitialState makeInitialState(
   const Odometry & odometry,
   const std::optional<geometry_msgs::msg::AccelWithCovarianceStamped> & acceleration,

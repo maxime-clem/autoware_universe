@@ -9,6 +9,18 @@ trajectory_mppi_optimizer:
     default_value: false
     description: Run MPPI without replacing the input trajectory
     read_only: false
+  trajectory_blend_weight:
+    type: double
+    default_value: 0.4
+    description: Weight of the new MPPI trajectory in temporal trajectory blending
+    validation: { bounds<>: [0.0, 1.0] }
+    read_only: false
+  blend_max_distance_threshold:
+    type: double
+    default_value: 0.5
+    description: Maximum spatial match distance in meters for temporal trajectory blending
+    validation: { gt_eq<>: [0.0] }
+    read_only: false
   limit_velocity_from_map:
     type: bool
     default_value: false

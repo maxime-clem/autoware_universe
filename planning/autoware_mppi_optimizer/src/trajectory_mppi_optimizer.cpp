@@ -271,6 +271,7 @@ ProcessingResult TrajectoryMppiOptimizer::process(
       map_velocity_limit_overrides_ = make_velocity_limit_overrides(updated_params);
     } catch (const std::exception & error) {
       constexpr auto level = diagnostic_msgs::msg::DiagnosticStatus::ERROR;
+      previous_optimized_trajectory_.reset();
       publish_enabled(false);
       publish_status_diagnostic(level, error.what(), rclcpp::Time{data.candidate_header.stamp});
       RCLCPP_ERROR(get_node_ptr()->get_logger(), "%s", error.what());
@@ -289,6 +290,7 @@ ProcessingResult TrajectoryMppiOptimizer::process(
 
   const auto reject_input = [&](const std::string & message) {
     constexpr auto level = diagnostic_msgs::msg::DiagnosticStatus::WARN;
+    previous_optimized_trajectory_.reset();
     publish_enabled(false);
     clear_markers(data.candidate_header);
     publish_status_diagnostic(level, message, rclcpp::Time{data.candidate_header.stamp});
@@ -298,6 +300,7 @@ ProcessingResult TrajectoryMppiOptimizer::process(
   };
 
   if (!params_.enabled) {
+    previous_optimized_trajectory_.reset();
     publish_enabled(false);
     clear_markers(data.candidate_header);
     return ProcessingResult::Unchanged;
@@ -397,9 +400,26 @@ ProcessingResult TrajectoryMppiOptimizer::process(
       }
     }
 
-    const auto result = optimizer_->optimizeTrajectory(
+    auto result = optimizer_->optimizeTrajectory(
       input, *data.current_odometry, acceleration, steering, all_targets,
       to_mppi_segments(road_borders), to_mppi_segments(drivable_area), kinematic_limits);
+
+    const bool optimization_produced_trajectory =
+      !result.debug.was_rejected &&
+      !result.debug.nominal_control_profile.acceleration_commands_mps2.empty();
+    if (optimization_produced_trajectory) {
+      if (previous_optimized_trajectory_) {
+        result.trajectory = detail::blendTrajectories(
+          result.trajectory, *previous_optimized_trajectory_, params_.trajectory_blend_weight,
+          params_.blend_max_distance_threshold);
+      }
+      previous_optimized_trajectory_ = result.trajectory;
+      result.debug.optimized_trajectory = result.trajectory;
+    } else {
+      // A rejected result can contain a limited stop fallback. A skipped pass returns the input.
+      // Neither result is safe temporal history for the next optimized trajectory.
+      previous_optimized_trajectory_.reset();
+    }
 
     pending_debug_ = result.debug;
     pending_debug_header_ = input.header;
@@ -426,6 +446,7 @@ ProcessingResult TrajectoryMppiOptimizer::process(
     return ProcessingResult::Modified;
   } catch (const std::exception & error) {
     constexpr auto level = diagnostic_msgs::msg::DiagnosticStatus::ERROR;
+    previous_optimized_trajectory_.reset();
     publish_enabled(false);
     clear_markers(data.candidate_header);
     publish_status_diagnostic(level, error.what(), rclcpp::Time{data.candidate_header.stamp});
@@ -439,6 +460,7 @@ ProcessingResult TrajectoryMppiOptimizer::process(
 void TrajectoryMppiOptimizer::reset_optimizer()
 {
   optimizer_.reset();
+  previous_optimized_trajectory_.reset();
   object_selector_ = autoware::avoidance_target_detector::TrackedObjectSelector{};
 }
 

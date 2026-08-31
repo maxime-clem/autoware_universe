@@ -38,6 +38,18 @@ geometry_msgs::msg::Quaternion quaternionFromYaw(const float yaw)
   return tf2::toMsg(quaternion);
 }
 
+double blendScalar(const double new_value, const double old_value, const double alpha)
+{
+  return new_value * alpha + old_value * (1.0 - alpha);
+}
+
+double blendYaw(const double new_yaw, const double old_yaw, const double alpha)
+{
+  const double shortest_difference =
+    std::atan2(std::sin(new_yaw - old_yaw), std::cos(new_yaw - old_yaw));
+  return old_yaw + alpha * shortest_difference;
+}
+
 }  // namespace
 
 bool isOptimizationRequired(const Trajectory & trajectory, const double min_length)
@@ -74,6 +86,64 @@ void setInitialEngageVelocity(Trajectory & trajectory, const std::optional<float
     it->longitudinal_velocity_mps = bounded_engage_velocity;
     it->acceleration_mps2 = bounded_engage_acceleration;
   }
+}
+
+Trajectory blendTrajectories(
+  const Trajectory & new_traj, const Trajectory & old_traj, const double alpha,
+  const double max_dist_threshold)
+{
+  if (!std::isfinite(alpha) || alpha < 0.0 || alpha > 1.0) {
+    throw std::invalid_argument("Trajectory blend weight must be finite and in [0, 1]");
+  }
+  if (!std::isfinite(max_dist_threshold) || max_dist_threshold < 0.0) {
+    throw std::invalid_argument(
+      "Trajectory blend maximum distance threshold must be finite and non-negative");
+  }
+
+  Trajectory output = new_traj;
+  if (alpha == 1.0 || new_traj.points.empty() || old_traj.points.empty()) {
+    return output;
+  }
+
+  for (std::size_t new_index = 0; new_index < new_traj.points.size(); ++new_index) {
+    const auto & new_point = new_traj.points[new_index];
+    const auto & new_position = new_point.pose.position;
+    double closest_distance = std::numeric_limits<double>::infinity();
+    const autoware_planning_msgs::msg::TrajectoryPoint * closest_old_point = nullptr;
+
+    for (const auto & old_point : old_traj.points) {
+      const auto & old_position = old_point.pose.position;
+      const double distance =
+        std::hypot(new_position.x - old_position.x, new_position.y - old_position.y);
+      if (distance < closest_distance) {
+        closest_distance = distance;
+        closest_old_point = &old_point;
+      }
+    }
+
+    if (closest_old_point == nullptr || closest_distance > max_dist_threshold) {
+      continue;
+    }
+
+    auto & output_point = output.points[new_index];
+    const auto & old_point = *closest_old_point;
+    output_point.pose.position.x = blendScalar(new_position.x, old_point.pose.position.x, alpha);
+    output_point.pose.position.y = blendScalar(new_position.y, old_point.pose.position.y, alpha);
+    output_point.pose.position.z = blendScalar(new_position.z, old_point.pose.position.z, alpha);
+
+    const double new_yaw = tf2::getYaw(new_point.pose.orientation);
+    const double old_yaw = tf2::getYaw(old_point.pose.orientation);
+    output_point.pose.orientation =
+      quaternionFromYaw(static_cast<float>(blendYaw(new_yaw, old_yaw, alpha)));
+
+    output_point.longitudinal_velocity_mps = static_cast<float>(
+      blendScalar(new_point.longitudinal_velocity_mps, old_point.longitudinal_velocity_mps, alpha));
+    output_point.acceleration_mps2 = static_cast<float>(
+      blendScalar(new_point.acceleration_mps2, old_point.acceleration_mps2, alpha));
+    output_point.front_wheel_angle_rad = static_cast<float>(
+      blendScalar(new_point.front_wheel_angle_rad, old_point.front_wheel_angle_rad, alpha));
+  }
+  return output;
 }
 
 InitialState makeInitialState(
