@@ -128,7 +128,7 @@ using DYN = FirstOrderDubinsBicycle;
 using COST = FirstOrderDubinsBicycleCost<kRefHorizon>;
 using FB = ZeroFeedback<DYN, kMppiHorizon>;
 
-#define USE_COLOURED_NOISE
+// #define USE_COLOURED_NOISE
 
 #ifdef USE_COLOURED_NOISE
 using SAMPLER = mppi::sampling_distributions::ColoredNoiseDistribution<DYN::DYN_PARAMS_T>;
@@ -1003,7 +1003,7 @@ struct FirstOrderDubinsMppiInterface::Impl
     // Smooth-MPPI samples action derivatives and integrates with dt.
     sp.dt = kDt;
 #endif
-    sampler = SAMPLER(sp);
+    sampler.setParams(sp);
 
     const float lambda = user_cost_params_.lambda;
     controller = std::make_unique<MppiWithHistoryAccess>(
