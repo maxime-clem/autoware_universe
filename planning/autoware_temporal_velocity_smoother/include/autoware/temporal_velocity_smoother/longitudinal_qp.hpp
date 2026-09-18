@@ -42,6 +42,11 @@ private:
 
   ProblemLayout layout_;
   std::unique_ptr<autoware::qp_interface::ProxQPInterface> solver_;
+  Eigen::MatrixXd p_;
+  Eigen::MatrixXd a_;
+  std::vector<double> q_;
+  std::vector<double> lower_;
+  std::vector<double> upper_;
 };
 
 }  // namespace autoware::temporal_velocity_smoother

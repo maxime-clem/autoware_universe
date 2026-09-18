@@ -24,3 +24,7 @@ places this plugin after geometry optimization. Running both longitudinal smooth
 The QP remains exactly `8N` variables by `8N` rows for every input. Candidate histories and solver
 instances are kept separately by candidate index. If the solver fails, the plugin publishes an
 integrated, jerk-limited fallback profile and still reports the trajectory as modified.
+
+Reverse trajectories are intentionally rejected. The reference coordinate is unsigned and follows
+the input path from the ego pose; supporting reverse motion requires a signed-path formulation, not
+only removal of the non-negative velocity bound.

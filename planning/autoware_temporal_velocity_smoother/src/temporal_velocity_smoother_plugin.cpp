@@ -298,9 +298,18 @@ ProcessingResult TemporalVelocitySmoother::process(
   const auto envelope_parameters = make_envelope_parameters(params_);
   const auto initial = select_initial_state(candidate, data, input_points);
 
+  std::vector<double> last_envelope = build_velocity_envelope(
+    path, reference_s, input_points, global_limit, context_->vehicle_info.wheel_base_m,
+    envelope_parameters, data.semantic_speed_tracker.get_slow_down_ranges(), stop_s, limits_);
+  const auto fallback_profile =
+    make_warm_start(initial, last_envelope, limits_, trajectory_time_step_);
+  std::vector<double> linearization_s;
+  linearization_s.reserve(horizon);
+  for (const auto & state : fallback_profile.states) {
+    linearization_s.push_back(state.s);
+  }
+
   SolveResult solved;
-  std::vector<double> linearization_s = reference_s;
-  std::vector<double> last_envelope;
   const int sqp_iterations = std::max(1, static_cast<int>(params_.sqp_iterations));
   for (int iteration = 0; iteration < sqp_iterations; ++iteration) {
     last_envelope = build_velocity_envelope(
@@ -347,10 +356,7 @@ ProcessingResult TemporalVelocitySmoother::process(
   if (solved.success) {
     output_states = solved.states;
   } else {
-    if (last_envelope.empty()) {
-      last_envelope.assign(horizon, global_limit);
-    }
-    output_states = make_warm_start(initial, last_envelope, limits_, trajectory_time_step_).states;
+    output_states = fallback_profile.states;
     RCLCPP_WARN_THROTTLE(
       get_node_ptr()->get_logger(), *get_clock(), 5000,
       "TemporalVelocitySmoother QP failed (%s); publishing integrated fallback",

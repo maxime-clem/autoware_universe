@@ -4,7 +4,7 @@
       enabled: true
       shadow_mode: false
       only_primary_candidate: false
-      horizon_points: 60
+      horizon_points: 80
       sqp_iterations: 2
       sqp_position_tolerance: 0.05
       weights:

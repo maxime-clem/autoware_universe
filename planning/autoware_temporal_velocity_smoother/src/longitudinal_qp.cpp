@@ -26,9 +26,13 @@ LongitudinalQp::LongitudinalQp(
   const std::size_t horizon, const bool enable_warm_start, const int max_iteration,
   const double eps_abs, const double eps_rel, const bool verbose)
 : layout_(horizon),
-  solver_(
-    std::make_unique<autoware::qp_interface::ProxQPInterface>(
-      enable_warm_start, max_iteration, eps_abs, eps_rel, verbose))
+  solver_(std::make_unique<autoware::qp_interface::ProxQPInterface>(
+    enable_warm_start, max_iteration, eps_abs, eps_rel, verbose)),
+  p_(Eigen::MatrixXd::Zero(layout_.variables, layout_.variables)),
+  a_(Eigen::MatrixXd::Zero(layout_.constraints, layout_.variables)),
+  q_(layout_.variables, 0.0),
+  lower_(layout_.constraints, -kInfinity),
+  upper_(layout_.constraints, kInfinity)
 {
   if (horizon == 0U) {
     throw std::invalid_argument("LongitudinalQp horizon must be positive");
@@ -61,28 +65,28 @@ SolveResult LongitudinalQp::solve(const QpInput & input)
   validate(input);
   const auto & x = layout_;
   const auto n = x.n;
-  Eigen::MatrixXd p = Eigen::MatrixXd::Zero(x.variables, x.variables);
-  Eigen::MatrixXd a = Eigen::MatrixXd::Zero(x.constraints, x.variables);
-  std::vector<double> q(x.variables, 0.0);
-  std::vector<double> lower(x.constraints, -kInfinity);
-  std::vector<double> upper(x.constraints, kInfinity);
+  p_.setZero();
+  a_.setZero();
+  std::fill(q_.begin(), q_.end(), 0.0);
+  std::fill(lower_.begin(), lower_.end(), -kInfinity);
+  std::fill(upper_.begin(), upper_.end(), kInfinity);
 
   for (std::size_t k = 0; k < n; ++k) {
     const double tracking = input.tracking_enabled[k] ? 1.0 : 0.0;
-    p(x.v + k, x.v + k) += tracking * input.weights.velocity_tracking;
-    q[x.v + k] -= tracking * input.weights.velocity_tracking * input.reference_v[k];
-    p(x.a + k, x.a + k) += tracking * input.weights.acceleration_tracking;
-    q[x.a + k] -= tracking * input.weights.acceleration_tracking * input.reference_a[k];
-    p(x.jerk + k, x.jerk + k) += input.weights.jerk;
-    p(x.velocity_slack + k, x.velocity_slack + k) += input.weights.over_velocity;
-    p(x.acceleration_slack + k, x.acceleration_slack + k) += input.weights.over_acceleration;
-    p(x.jerk_slack + k, x.jerk_slack + k) += input.weights.over_jerk;
-    p(x.position_slack + k, x.position_slack + k) += input.weights.over_position;
-    q[x.s + k] -= input.weights.progress;
+    p_(x.v + k, x.v + k) += tracking * input.weights.velocity_tracking;
+    q_[x.v + k] -= tracking * input.weights.velocity_tracking * input.reference_v[k];
+    p_(x.a + k, x.a + k) += tracking * input.weights.acceleration_tracking;
+    q_[x.a + k] -= tracking * input.weights.acceleration_tracking * input.reference_a[k];
+    p_(x.jerk + k, x.jerk + k) += input.weights.jerk;
+    p_(x.velocity_slack + k, x.velocity_slack + k) += input.weights.over_velocity;
+    p_(x.acceleration_slack + k, x.acceleration_slack + k) += input.weights.over_acceleration;
+    p_(x.jerk_slack + k, x.jerk_slack + k) += input.weights.over_jerk;
+    p_(x.position_slack + k, x.position_slack + k) += input.weights.over_position;
+    q_[x.s + k] -= input.weights.progress;
   }
 
   // A tiny regularizer keeps every neutralized/free direction numerically well posed.
-  p.diagonal().array() += 1.0e-9;
+  p_.diagonal().array() += 1.0e-9;
 
   const double dt = input.dt;
   const double dt2 = dt * dt;
@@ -91,51 +95,52 @@ SolveResult LongitudinalQp::solve(const QpInput & input)
     const auto rs = x.dynamics_row + 3U * k;
     const auto rv = rs + 1U;
     const auto ra = rs + 2U;
-    a(rs, x.s + k) = 1.0;
-    a(rv, x.v + k) = 1.0;
-    a(ra, x.a + k) = 1.0;
-    a(rs, x.jerk + k) = -dt3 / 6.0;
-    a(rv, x.jerk + k) = -dt2 / 2.0;
-    a(ra, x.jerk + k) = -dt;
+    a_(rs, x.s + k) = 1.0;
+    a_(rv, x.v + k) = 1.0;
+    a_(ra, x.a + k) = 1.0;
+    a_(rs, x.jerk + k) = -dt3 / 6.0;
+    a_(rv, x.jerk + k) = -dt2 / 2.0;
+    a_(ra, x.jerk + k) = -dt;
     if (k == 0U) {
-      lower[rs] = upper[rs] = input.initial.s + input.initial.v * dt + 0.5 * input.initial.a * dt2;
-      lower[rv] = upper[rv] = input.initial.v + input.initial.a * dt;
-      lower[ra] = upper[ra] = input.initial.a;
+      lower_[rs] = upper_[rs] =
+        input.initial.s + input.initial.v * dt + 0.5 * input.initial.a * dt2;
+      lower_[rv] = upper_[rv] = input.initial.v + input.initial.a * dt;
+      lower_[ra] = upper_[ra] = input.initial.a;
     } else {
-      a(rs, x.s + k - 1U) = -1.0;
-      a(rs, x.v + k - 1U) = -dt;
-      a(rs, x.a + k - 1U) = -0.5 * dt2;
-      a(rv, x.v + k - 1U) = -1.0;
-      a(rv, x.a + k - 1U) = -dt;
-      a(ra, x.a + k - 1U) = -1.0;
-      lower[rs] = upper[rs] = 0.0;
-      lower[rv] = upper[rv] = 0.0;
-      lower[ra] = upper[ra] = 0.0;
+      a_(rs, x.s + k - 1U) = -1.0;
+      a_(rs, x.v + k - 1U) = -dt;
+      a_(rs, x.a + k - 1U) = -0.5 * dt2;
+      a_(rv, x.v + k - 1U) = -1.0;
+      a_(rv, x.a + k - 1U) = -dt;
+      a_(ra, x.a + k - 1U) = -1.0;
+      lower_[rs] = upper_[rs] = 0.0;
+      lower_[rv] = upper_[rv] = 0.0;
+      lower_[ra] = upper_[ra] = 0.0;
     }
 
     const auto velocity_row = x.velocity_row + k;
-    a(velocity_row, x.v + k) = 1.0;
-    a(velocity_row, x.velocity_slack + k) = -1.0;
-    lower[velocity_row] = 0.0;
-    upper[velocity_row] = std::max(0.0, input.velocity_max[k]);
+    a_(velocity_row, x.v + k) = 1.0;
+    a_(velocity_row, x.velocity_slack + k) = -1.0;
+    lower_[velocity_row] = 0.0;
+    upper_[velocity_row] = std::max(0.0, input.velocity_max[k]);
 
     const auto acceleration_row = x.acceleration_row + k;
-    a(acceleration_row, x.a + k) = 1.0;
-    a(acceleration_row, x.acceleration_slack + k) = -1.0;
-    lower[acceleration_row] = input.limits.min_acceleration;
-    upper[acceleration_row] = input.limits.max_acceleration;
+    a_(acceleration_row, x.a + k) = 1.0;
+    a_(acceleration_row, x.acceleration_slack + k) = -1.0;
+    lower_[acceleration_row] = input.limits.min_acceleration;
+    upper_[acceleration_row] = input.limits.max_acceleration;
 
     const auto jerk_row = x.jerk_row + k;
-    a(jerk_row, x.jerk + k) = 1.0;
-    a(jerk_row, x.jerk_slack + k) = -1.0;
-    lower[jerk_row] = input.limits.min_jerk;
-    upper[jerk_row] = input.limits.max_jerk;
+    a_(jerk_row, x.jerk + k) = 1.0;
+    a_(jerk_row, x.jerk_slack + k) = -1.0;
+    lower_[jerk_row] = input.limits.min_jerk;
+    upper_[jerk_row] = input.limits.max_jerk;
 
     const auto position_row = x.position_row + k;
-    a(position_row, x.s + k) = 1.0;
-    a(position_row, x.position_slack + k) = -1.0;
     if (input.position_limit) {
-      upper[position_row] = *input.position_limit;
+      a_(position_row, x.s + k) = 1.0;
+      a_(position_row, x.position_slack + k) = -1.0;
+      upper_[position_row] = *input.position_limit;
     }
   }
 
@@ -143,24 +148,25 @@ SolveResult LongitudinalQp::solve(const QpInput & input)
   for (std::size_t k = 0; k + 1U < n; ++k) {
     const auto row = x.monotonic_row + k;
     if (!input.allow_reverse) {
-      a(row, x.s + k) = 1.0;
-      a(row, x.s + k + 1U) = -1.0;
-      upper[row] = 0.0;
+      a_(row, x.s + k) = 1.0;
+      a_(row, x.s + k + 1U) = -1.0;
+      upper_[row] = 0.0;
     }
   }
 
-  a(x.terminal_row, x.v + n - 1U) = 1.0;
-  a(x.terminal_row, x.velocity_slack + n - 1U) = -1.0;
   if (input.terminal_velocity_limit) {
-    upper[x.terminal_row] = std::max(0.0, *input.terminal_velocity_limit);
+    a_(x.terminal_row, x.v + n - 1U) = 1.0;
+    a_(x.terminal_row, x.velocity_slack + n - 1U) = -1.0;
+    upper_[x.terminal_row] = std::max(0.0, *input.terminal_velocity_limit);
   }
 
-  if (q.size() != x.variables || lower.size() != x.constraints || upper.size() != x.constraints) {
+  if (
+    q_.size() != x.variables || lower_.size() != x.constraints || upper_.size() != x.constraints) {
     throw std::logic_error("temporal smoother QP vectors violate the 8N invariant");
   }
 
   SolveResult result;
-  const auto solution = solver_->optimize(p, a, q, lower, upper);
+  const auto solution = solver_->optimize(p_, a_, q_, lower_, upper_);
   result.success = solver_->isSolved() && solution.size() == x.variables;
   result.status = solver_->getStatus();
   result.iterations = solver_->getIterationNumber();

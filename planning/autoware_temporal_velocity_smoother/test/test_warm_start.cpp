@@ -26,15 +26,35 @@ TEST(WarmStart, IntegratesMonotoneLimitedProfile)
   const auto profile = make_warm_start({0.0, 2.0, 0.0}, std::vector<double>(20, 5.0), limits, 0.1);
   ASSERT_EQ(profile.states.size(), 20U);
   ASSERT_EQ(profile.jerk.size(), 20U);
-  double previous_s = 0.0;
+  LongitudinalState previous{0.0, 2.0, 0.0};
   for (std::size_t k = 0; k < profile.states.size(); ++k) {
-    EXPECT_GE(profile.states[k].s, previous_s);
+    EXPECT_NEAR(
+      profile.states[k].s,
+      previous.s + previous.v * 0.1 + 0.5 * previous.a * 0.01 + profile.jerk[k] * 0.001 / 6.0,
+      1.0e-12);
+    EXPECT_NEAR(
+      profile.states[k].v, previous.v + previous.a * 0.1 + 0.5 * profile.jerk[k] * 0.01, 1.0e-12);
+    EXPECT_NEAR(profile.states[k].a, previous.a + profile.jerk[k] * 0.1, 1.0e-12);
+    EXPECT_GE(profile.states[k].s, previous.s);
     EXPECT_GE(profile.states[k].v, 0.0);
     EXPECT_LE(profile.states[k].v, 5.0 + 1.0e-9);
     EXPECT_GE(profile.jerk[k], limits.min_jerk - 1.0e-9);
     EXPECT_LE(profile.jerk[k], limits.max_jerk + 1.0e-9);
-    previous_s = profile.states[k].s;
+    previous = profile.states[k];
   }
+}
+
+TEST(WarmStart, RecomputesEntireStateWhenVelocityCapIsReachable)
+{
+  using namespace autoware::temporal_velocity_smoother;
+  Limits limits;
+  const auto profile = make_warm_start({0.0, 2.0, 0.0}, {1.999}, limits, 0.1);
+  ASSERT_EQ(profile.states.size(), 1U);
+  ASSERT_EQ(profile.jerk.size(), 1U);
+  EXPECT_NEAR(profile.jerk.front(), -0.2, 1.0e-12);
+  EXPECT_NEAR(profile.states.front().v, 1.999, 1.0e-12);
+  EXPECT_NEAR(profile.states.front().a, -0.02, 1.0e-12);
+  EXPECT_NEAR(profile.states.front().s, 0.2 - 0.2 * 0.001 / 6.0, 1.0e-12);
 }
 
 TEST(WarmStart, BrakingEnvelopeStopsAtPosition)

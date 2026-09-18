@@ -45,19 +45,29 @@ WarmStartProfile make_warm_start(
   auto state = initial;
   for (const double raw_cap : velocity_max) {
     const double cap = std::max(0.0, raw_cap);
-    const double desired_acceleration =
-      std::clamp((cap - state.v) / dt, limits.min_acceleration, limits.max_acceleration);
-    const double jerk =
-      std::clamp((desired_acceleration - state.a) / dt, limits.min_jerk, limits.max_jerk);
+    const double acceleration_jerk_min = (limits.min_acceleration - state.a) / dt;
+    const double acceleration_jerk_max = (limits.max_acceleration - state.a) / dt;
+    const double jerk_min = std::max(limits.min_jerk, acceleration_jerk_min);
+    const double jerk_max = std::min(limits.max_jerk, acceleration_jerk_max);
+    const double jerk_to_cap = 2.0 * (cap - state.v - state.a * dt) / (dt * dt);
+    const double jerk = std::clamp(jerk_to_cap, jerk_min, jerk_max);
     LongitudinalState next;
     next.s = state.s + state.v * dt + 0.5 * state.a * dt * dt + jerk * dt * dt * dt / 6.0;
-    next.v = std::max(0.0, state.v + state.a * dt + 0.5 * jerk * dt * dt);
-    next.a = std::clamp(state.a + jerk * dt, limits.min_acceleration, limits.max_acceleration);
-    if (next.v > cap) {
-      next.v = cap;
-      next.a = std::min(0.0, next.a);
+    next.v = state.v + state.a * dt + 0.5 * jerk * dt * dt;
+    next.a = state.a + jerk * dt;
+
+    // Prevent reverse motion while maintaining physical consistency at a stop
+    if (next.v < 0.0) {
+      next.v = 0.0;
+      next.a = 0.0;  // The vehicle has stopped; acceleration vanishes
+
+      // Calculate exactly how long it took to hit 0 velocity within this dt interval
+      // Using quadratic formula: 0.5 * jerk * t^2 + a * t + v = 0
+      // For a simple linear approximation when jerk is small: t ≈ -state.v / state.a
+      // Or simply hold the position at the zero-crossing estimate:
+      next.s = state.s + (-0.5 * state.v * state.v) / std::min(-1e-6, state.a);
     }
-    next.s = std::max(state.s, next.s);
+
     profile.states.push_back(next);
     profile.jerk.push_back(jerk);
     state = next;
