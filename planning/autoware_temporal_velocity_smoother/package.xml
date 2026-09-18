@@ -1,0 +1,35 @@
+<?xml version="1.0"?>
+<package format="3">
+  <name>autoware_temporal_velocity_smoother</name>
+  <version>0.1.0</version>
+  <description>A fixed-step time-domain longitudinal trajectory smoother plugin.</description>
+  <maintainer email="autoware@tier4.jp">Autoware maintainers</maintainer>
+  <license>Apache License 2.0</license>
+
+  <buildtool_depend>ament_cmake_auto</buildtool_depend>
+  <buildtool_depend>autoware_cmake</buildtool_depend>
+  <build_depend>eigen3_cmake_module</build_depend>
+
+  <depend>autoware_internal_planning_msgs</depend>
+  <depend>autoware_planning_msgs</depend>
+  <depend>autoware_qp_interface</depend>
+  <depend>autoware_trajectory_modifier</depend>
+  <depend>autoware_utils_debug</depend>
+  <depend>autoware_utils_rclcpp</depend>
+  <depend>autoware_velocity_smoother</depend>
+  <depend>builtin_interfaces</depend>
+  <depend>eigen</depend>
+  <depend>generate_parameter_library</depend>
+  <depend>geometry_msgs</depend>
+  <depend>nav_msgs</depend>
+  <depend>pluginlib</depend>
+  <depend>rclcpp</depend>
+
+  <test_depend>ament_cmake_gtest</test_depend>
+  <test_depend>ament_lint_auto</test_depend>
+  <test_depend>autoware_lint_common</test_depend>
+
+  <export>
+    <build_type>ament_cmake</build_type>
+  </export>
+</package>

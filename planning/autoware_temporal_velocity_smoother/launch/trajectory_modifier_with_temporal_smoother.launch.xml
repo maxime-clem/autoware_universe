@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<launch>
+  <include file="$(find-pkg-share autoware_trajectory_modifier)/launch/trajectory_modifier.launch.xml">
+    <arg name="trajectory_modifier_param_path" value="$(find-pkg-share autoware_temporal_velocity_smoother)/config/pipeline.param.yaml"/>
+    <arg name="mppi_param_path" value="$(find-pkg-share autoware_temporal_velocity_smoother)/config/temporal_velocity_smoother.param.yaml"/>
+  </include>
+</launch>

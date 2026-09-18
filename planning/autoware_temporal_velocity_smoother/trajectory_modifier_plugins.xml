@@ -1,0 +1,9 @@
+<?xml version="1.0"?>
+<library path="autoware_temporal_velocity_smoother_plugin">
+  <class type="autoware::temporal_velocity_smoother::plugin::TemporalVelocitySmoother"
+         base_class_type="autoware::trajectory_modifier::plugin::TrajectoryModifierPluginBase">
+    <description>
+      Time-domain longitudinal smoother using a constant-step triple-integrator QP.
+    </description>
+  </class>
+</library>

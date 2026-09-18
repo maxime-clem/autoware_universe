@@ -1,0 +1,173 @@
+temporal_velocity_smoother:
+  enabled:
+    type: bool
+    default_value: true
+    description: Enable the temporal velocity smoother
+    read_only: false
+  shadow_mode:
+    type: bool
+    default_value: false
+    description: Compute and publish debug output without replacing the trajectory
+    read_only: false
+  only_primary_candidate:
+    type: bool
+    default_value: false
+    description: Process candidate zero only
+    read_only: false
+  horizon_points:
+    type: int
+    default_value: 60
+    description: Fixed QP horizon point count
+    validation: { bounds<>: [2, 500] }
+    read_only: false
+  sqp_iterations:
+    type: int
+    default_value: 2
+    description: Position-dependent envelope linearization passes
+    validation: { bounds<>: [1, 10] }
+    read_only: false
+  sqp_position_tolerance:
+    type: double
+    default_value: 0.05
+    description: SQP early exit tolerance in metres
+    validation: { gt<>: [0.0] }
+    read_only: false
+  weights:
+    velocity_tracking:
+      type: double
+      default_value: 1.0
+      validation: { gt_eq<>: [0.0] }
+    accel_tracking:
+      type: double
+      default_value: 10.0
+      validation: { gt_eq<>: [0.0] }
+    jerk:
+      type: double
+      default_value: 30.0
+      validation: { gt_eq<>: [0.0] }
+    progress:
+      type: double
+      default_value: 0.0
+      validation: { gt_eq<>: [0.0] }
+    over_v:
+      type: double
+      default_value: 3000.0
+      validation: { gt<>: [0.0] }
+    over_a:
+      type: double
+      default_value: 30.0
+      validation: { gt<>: [0.0] }
+    over_j:
+      type: double
+      default_value: 10.0
+      validation: { gt<>: [0.0] }
+    over_s:
+      type: double
+      default_value: 100000.0
+      validation: { gt<>: [0.0] }
+  lateral_acc:
+    enable:
+      type: bool
+      default_value: true
+    velocity_thresholds:
+      type: double_array
+      default_value: [0.1, 0.3, 20.0, 30.0]
+    limits:
+      type: double_array
+      default_value: [0.8, 0.8, 0.8, 0.8]
+    min_curve_velocity:
+      type: double
+      default_value: 2.74
+      validation: { gt_eq<>: [0.0] }
+    decel_distance_before_curve:
+      type: double
+      default_value: 3.5
+      validation: { gt_eq<>: [0.0] }
+    decel_distance_after_curve:
+      type: double
+      default_value: 2.0
+      validation: { gt_eq<>: [0.0] }
+  steer_rate:
+    enable:
+      type: bool
+      default_value: true
+    limits_deg_s:
+      type: double_array
+      default_value: [57.0, 57.0, 57.0, 40.0]
+    curvature_threshold:
+      type: double
+      default_value: 0.02
+      validation: { gt_eq<>: [0.0] }
+  path:
+    resample_ds:
+      type: double
+      default_value: 0.1
+      validation: { gt<>: [0.0] }
+    curvature_calculation_distance:
+      type: double
+      default_value: 5.0
+      validation: { gt<>: [0.0] }
+  path_end_policy:
+    type: string
+    default_value: clamp_s
+    description: Path-end handling policy
+    validation:
+      one_of<>: [[clamp_s, extrapolate, shrink_horizon]]
+  terminal_stop_margin:
+    type: double
+    default_value: 1.0
+    validation: { gt_eq<>: [0.0] }
+  stop:
+    stop_decel:
+      type: double
+      default_value: 0.0
+    stopping_velocity:
+      type: double
+      default_value: 2.778
+      validation: { gt_eq<>: [0.0] }
+    stopping_distance:
+      type: double
+      default_value: 0.0
+      validation: { gt_eq<>: [0.0] }
+  initial_state:
+    replan_vel_deviation:
+      type: double
+      default_value: 5.53
+      validation: { gt_eq<>: [0.0] }
+    engage_velocity:
+      type: double
+      default_value: 0.25
+      validation: { gt_eq<>: [0.0] }
+    engage_acceleration:
+      type: double
+      default_value: 0.1
+    engage_exit_ratio:
+      type: double
+      default_value: 0.5
+      validation: { bounds<>: [0.0, 1.0] }
+    max_plan_age:
+      type: double
+      default_value: 0.5
+      validation: { gt_eq<>: [0.0] }
+  solver:
+    enable_warm_start:
+      type: bool
+      default_value: true
+    max_iteration:
+      type: int
+      default_value: 20000
+      validation: { gt<>: [0] }
+    eps_abs:
+      type: double
+      default_value: 1.0e-8
+      validation: { gt<>: [0.0] }
+    eps_rel:
+      type: double
+      default_value: 1.0e-6
+      validation: { gt<>: [0.0] }
+  use_jerk_aware_braking_envelope:
+    type: bool
+    default_value: false
+  publish_debug_trajectories:
+    type: bool
+    default_value: false

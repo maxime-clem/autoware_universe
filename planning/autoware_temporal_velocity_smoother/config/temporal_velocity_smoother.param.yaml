@@ -1,0 +1,51 @@
+/**:
+  ros__parameters:
+    temporal_velocity_smoother:
+      enabled: true
+      shadow_mode: false
+      only_primary_candidate: false
+      horizon_points: 60
+      sqp_iterations: 2
+      sqp_position_tolerance: 0.05
+      weights:
+        velocity_tracking: 1.0
+        accel_tracking: 10.0
+        jerk: 30.0
+        progress: 0.0
+        over_v: 3000.0
+        over_a: 30.0
+        over_j: 10.0
+        over_s: 100000.0
+      lateral_acc:
+        enable: true
+        velocity_thresholds: [0.1, 0.3, 20.0, 30.0]
+        limits: [0.8, 0.8, 0.8, 0.8]
+        min_curve_velocity: 2.74
+        decel_distance_before_curve: 3.5
+        decel_distance_after_curve: 2.0
+      steer_rate:
+        enable: true
+        limits_deg_s: [57.0, 57.0, 57.0, 40.0]
+        curvature_threshold: 0.02
+      path:
+        resample_ds: 0.1
+        curvature_calculation_distance: 5.0
+      path_end_policy: clamp_s
+      terminal_stop_margin: 1.0
+      stop:
+        stop_decel: 0.0
+        stopping_velocity: 2.778
+        stopping_distance: 0.0
+      initial_state:
+        replan_vel_deviation: 5.53
+        engage_velocity: 0.25
+        engage_acceleration: 0.1
+        engage_exit_ratio: 0.5
+        max_plan_age: 0.5
+      solver:
+        enable_warm_start: true
+        max_iteration: 20000
+        eps_abs: 1.0e-8
+        eps_rel: 1.0e-6
+      use_jerk_aware_braking_envelope: false
+      publish_debug_trajectories: false

@@ -1,0 +1,17 @@
+/**:
+  ros__parameters:
+    plugin_names:
+      - "autoware::trajectory_modifier::plugin::MapVelocityLimits"
+      - "autoware::trajectory_modifier::plugin::StopPointFixer"
+      - "autoware::trajectory_modifier::plugin::SurroundObstacleStop"
+      - "autoware::trajectory_modifier::plugin::ObstacleStop"
+      - "autoware::trajectory_modifier::plugin::TrafficLightStop"
+      - "autoware::trajectory_modifier::plugin::VelocityModifier"
+      - "autoware::trajectory_modifier::plugin::TrajectoryPointFixer"
+      - "autoware::trajectory_modifier::plugin::TrajectoryKinematicFeasibilityEnforcer"
+      - "autoware::trajectory_modifier::plugin::TrajectoryQPSmoother"
+      - "autoware::trajectory_modifier::plugin::TrajectorySplineSmoother"
+      - "autoware::trajectory_modifier::plugin::TrajectoryMPTOptimizer"
+      - "autoware::temporal_velocity_smoother::plugin::TemporalVelocitySmoother"
+      - "autoware::trajectory_modifier::plugin::TrajectoryExtender"
+    use_velocity_optimizer: false
